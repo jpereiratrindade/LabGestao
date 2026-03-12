@@ -21,6 +21,14 @@
           buildInputs = with pkgs; [
             SDL2
             libGL
+            xorg.libX11
+            xorg.libXext
+            xorg.libXcursor
+            xorg.libXrandr
+            xorg.libXinerama
+            xorg.libXi
+            libxkbcommon
+            wayland
           ];
 
           shellHook = ''

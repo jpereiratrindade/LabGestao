@@ -30,7 +30,8 @@ target_include_directories(imgui PUBLIC
     ${IMGUI_DIR}/backends
 )
 
-target_compile_definitions(imgui PUBLIC IMGUI_USE_WCHAR32)
+# Definido no imconfig.h para consistência e evitar warnings
+# target_compile_definitions(imgui PUBLIC IMGUI_USE_WCHAR32)
 
 target_link_libraries(imgui PUBLIC SDL2::SDL2 OpenGL::GL)
 
