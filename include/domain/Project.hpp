@@ -55,6 +55,9 @@ struct Project {
     float graph_y{0.f};
     float graph_vx{0.f}; // velocidade para layout força-direcionado
     float graph_vy{0.f};
+    bool auto_discovered{false};
+    std::string source_path;
+    std::string source_root;
 };
 
 } // namespace labgestao

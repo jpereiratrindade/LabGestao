@@ -69,6 +69,9 @@ static json projectToJson(const Project& p) {
     j["created_at"]  = p.created_at;
     j["graph_x"]     = p.graph_x;
     j["graph_y"]     = p.graph_y;
+    j["auto_discovered"] = p.auto_discovered;
+    j["source_path"]     = p.source_path;
+    j["source_root"]     = p.source_root;
     return j;
 }
 
@@ -84,6 +87,9 @@ static Project projectFromJson(const json& j) {
     p.created_at  = j.value("created_at",  "");
     p.graph_x     = j.value("graph_x",     0.f);
     p.graph_y     = j.value("graph_y",     0.f);
+    p.auto_discovered = j.value("auto_discovered", false);
+    p.source_path     = j.value("source_path",     "");
+    p.source_root     = j.value("source_root",     "");
     return p;
 }
 

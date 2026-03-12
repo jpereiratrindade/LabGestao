@@ -9,10 +9,17 @@
 #include <SDL2/SDL_opengl.h>
 
 #include <cstdio>
+#include <cstdlib>
 #include <string>
 #include <filesystem>
 #include <vector>
-#include <iostream>
+#include <unordered_map>
+#include <unordered_set>
+#include <algorithm>
+#include <chrono>
+#include <ctime>
+#include <sstream>
+#include <iomanip>
 
 namespace fs = std::filesystem;
 
@@ -22,6 +29,14 @@ static std::string FindFontPath(const std::vector<const char*>& candidates) {
         if (fs::exists(path)) {
             return path;
         }
+    }
+    return {};
+}
+
+static std::string FindFontFromEnv(const char* envName) {
+    const char* value = std::getenv(envName);
+    if (value && *value && fs::exists(value)) {
+        return value;
     }
     return {};
 }
@@ -48,27 +63,33 @@ static void LoadFonts(ImGuiIO& io) {
         "/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf",
         "/usr/share/fonts/TTF/NotoSans-Regular.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/dejavu-sans-fonts/DejaVuSans.ttf",
     };
     const std::vector<const char*> emojiCandidates = {
         "/usr/share/fonts/google-noto-emoji-fonts/NotoEmoji-Regular.ttf",
         "/usr/share/fonts/truetype/noto/NotoEmoji-Regular.ttf",
         "/usr/share/fonts/TTF/NotoEmoji-Regular.ttf",
-        "/usr/share/fonts/google-noto-color-emoji-fonts/Noto-COLRv1.ttf",
-        "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
     };
 #endif
 
-    std::string basePath = FindFontPath(baseCandidates);
+    std::string basePath = FindFontFromEnv("LABGESTAO_BASE_FONT");
+    if (basePath.empty()) {
+        basePath = FindFontPath(baseCandidates);
+    }
     ImFont* baseFont = nullptr;
     if (!basePath.empty()) {
         baseFont = io.Fonts->AddFontFromFileTTF(basePath.c_str(), baseFontSize);
     }
     if (!baseFont) {
         baseFont = io.Fonts->AddFontDefault();
+        std::fprintf(stderr, "Font warning: using ImGui default bitmap font.\n");
     }
     io.FontDefault = baseFont;
 
-    std::string emojiPath = FindFontPath(emojiCandidates);
+    std::string emojiPath = FindFontFromEnv("LABGESTAO_EMOJI_FONT");
+    if (emojiPath.empty()) {
+        emojiPath = FindFontPath(emojiCandidates);
+    }
     if (!emojiPath.empty()) {
         ImFontConfig config;
         config.MergeMode = true;
@@ -92,42 +113,135 @@ static void LoadFonts(ImGuiIO& io) {
     }
 }
 
-// ── Sample data seed ─────────────────────────────────────────────────────────
-static void seedSampleData(labgestao::ProjectStore& store) {
-    using P = labgestao::Project;
-    using S = labgestao::ProjectStatus;
+// ── Folder Monitoring ────────────────────────────────────────────────────────
+struct MonitoredRoot {
+    std::string path;
+    std::string category;
+    std::vector<std::string> tags;
+    std::vector<std::string> markerFiles;
+};
 
-    auto mk = [&](const char* name, S st, const char* cat, const char* desc,
-                  std::vector<std::string> tags) {
-        P p;
-        p.id          = labgestao::ProjectStore::generateId();
-        p.name        = name;
-        p.status      = st;
-        p.category    = cat;
-        p.description = desc;
-        p.tags        = std::move(tags);
-        p.created_at  = "2026-03-01";
-        store.add(std::move(p));
-    };
+static std::string TodayIsoDate() {
+    std::time_t t = std::time(nullptr);
+    std::tm tm {};
+#if defined(_WIN32)
+    localtime_s(&tm, &t);
+#else
+    localtime_r(&t, &tm);
+#endif
+    char buf[11] = {};
+    std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tm);
+    return buf;
+}
 
-    mk("SIGMA",        S::Doing,   "Ciência", "Sistema de ingestão e análise científica.", {"C++", "NLP", "IA"});
-    mk("SisterSTRATA", S::Review,  "GeoSim",  "Engine de simulação estratigráfica.",       {"Vulkan", "GLSL"});
-    mk("LabGestao",    S::Doing,   "Gestão",  "App de gestão de projetos (este!).",        {"ImGui","SDL2"});
-    mk("FocinhoTraker",S::Backlog, "CV",      "Rastreamento facial com ML.",               {"Python","CV"});
-    mk("GeoHexBatch",  S::Done,    "GeoSim",  "Processamento batch de hexágonos geo.",     {"C++","PSQL"});
-    mk("PCTG",         S::Paused,  "Rede",    "Protocolo de comunicação TCP genérico.",    {"C++","Net"});
-    mk("LabecoDA",     S::Done,    "DataAnl", "Análise de dados ecofuncional.",            {"R","Stats"});
-    mk("IdeaWalker",   S::Backlog, "Misc",    "Explorador de ideias em grafo.",            {"ImGui","Graph"});
+static std::string CanonicalPathOrRaw(const fs::path& p) {
+    std::error_code ec;
+    fs::path canon = fs::weakly_canonical(p, ec);
+    if (ec) {
+        ec.clear();
+        canon = fs::absolute(p, ec);
+    }
+    if (ec) return p.lexically_normal().string();
+    return canon.lexically_normal().string();
+}
 
-    // Some connections
-    auto& all = store.getAll();
-    if (all.size() >= 3) {
-        all[0].connections.push_back(all[2].id); // SIGMA <-> LabGestao
-        all[2].connections.push_back(all[0].id);
-        all[1].connections.push_back(all[4].id); // SisterSTRATA <-> GeoHexBatch
-        all[4].connections.push_back(all[1].id);
-        all[2].connections.push_back(all[7].id); // LabGestao <-> IdeaWalker
-        all[7].connections.push_back(all[2].id);
+static std::string MakeAutoProjectId(const std::string& canonicalPath) {
+    const std::size_t h = std::hash<std::string>{}(canonicalPath);
+    std::ostringstream oss;
+    oss << "auto-" << std::hex << h;
+    return oss.str();
+}
+
+static bool LooksLikeProjectFolder(const fs::path& dir, const MonitoredRoot& root) {
+    if (fs::exists(dir / ".git")) return true;
+    for (const auto& marker : root.markerFiles) {
+        if (fs::exists(dir / marker)) return true;
+    }
+    return false;
+}
+
+static std::vector<labgestao::Project> ScanProjectsFromRoots(const std::vector<MonitoredRoot>& roots) {
+    std::vector<labgestao::Project> discovered;
+    const std::string today = TodayIsoDate();
+
+    for (const auto& root : roots) {
+        std::error_code ec;
+        if (!fs::exists(root.path, ec) || !fs::is_directory(root.path, ec)) continue;
+
+        fs::directory_iterator it(root.path, fs::directory_options::skip_permission_denied, ec);
+        for (; !ec && it != fs::end(it); it.increment(ec)) {
+            const fs::directory_entry entry = *it;
+            if (!entry.is_directory(ec)) continue;
+
+            const fs::path dir = entry.path();
+            const std::string folderName = dir.filename().string();
+            if (folderName.empty() || folderName[0] == '.') continue;
+            if (!LooksLikeProjectFolder(dir, root)) continue;
+
+            const std::string canonicalPath = CanonicalPathOrRaw(dir);
+
+            labgestao::Project p;
+            p.id = MakeAutoProjectId(canonicalPath);
+            p.name = folderName;
+            p.status = labgestao::ProjectStatus::Backlog;
+            p.category = root.category;
+            p.description = "Projeto detectado automaticamente em pasta monitorada.";
+            p.tags = root.tags;
+            p.created_at = today;
+            p.auto_discovered = true;
+            p.source_path = canonicalPath;
+            p.source_root = root.path;
+            discovered.push_back(std::move(p));
+        }
+    }
+
+    std::sort(discovered.begin(), discovered.end(), [](const auto& a, const auto& b) {
+        return a.name < b.name;
+    });
+    return discovered;
+}
+
+static void SyncAutoDiscoveredProjects(labgestao::ProjectStore& store, const std::vector<MonitoredRoot>& roots) {
+    const auto scanned = ScanProjectsFromRoots(roots);
+
+    std::unordered_map<std::string, labgestao::Project> byId;
+    byId.reserve(scanned.size());
+    for (const auto& p : scanned) byId.emplace(p.id, p);
+
+    std::unordered_set<std::string> currentAutoIds;
+    currentAutoIds.reserve(byId.size());
+    for (const auto& [id, _] : byId) currentAutoIds.insert(id);
+
+    for (const auto& [id, detected] : byId) {
+        auto opt = store.findById(id);
+        if (!opt) {
+            store.add(detected);
+            continue;
+        }
+
+        labgestao::Project updated = **opt;
+        bool changed = false;
+
+        if (!updated.auto_discovered) { updated.auto_discovered = true; changed = true; }
+        if (updated.name != detected.name) { updated.name = detected.name; changed = true; }
+        if (updated.category != detected.category) { updated.category = detected.category; changed = true; }
+        if (updated.tags != detected.tags) { updated.tags = detected.tags; changed = true; }
+        if (updated.source_path != detected.source_path) { updated.source_path = detected.source_path; changed = true; }
+        if (updated.source_root != detected.source_root) { updated.source_root = detected.source_root; changed = true; }
+        if (updated.created_at.empty()) { updated.created_at = detected.created_at; changed = true; }
+        if (updated.description.empty()) { updated.description = detected.description; changed = true; }
+
+        if (changed) store.update(updated);
+    }
+
+    std::vector<std::string> staleAutoProjects;
+    for (const auto& p : store.getAll()) {
+        if (p.auto_discovered && !currentAutoIds.contains(p.id)) {
+            staleAutoProjects.push_back(p.id);
+        }
+    }
+    for (const auto& id : staleAutoProjects) {
+        store.remove(id);
     }
 }
 
@@ -178,17 +292,37 @@ int main(int /*argc*/, char** /*argv*/) {
     // Domain
     labgestao::ProjectStore store;
     if (!store.loadFromJson(dataPath)) {
-        // First run — seed sample projects
-        seedSampleData(store);
         fs::create_directories("data");
-        store.saveToJson(dataPath);
-        store.clearDirty();
     }
 
+    const std::vector<MonitoredRoot> monitoredRoots = {
+        {
+            "/run/media/jpereiratrindade/labeco10T/dev/cpp",
+            "C++",
+            {"Auto", "C++"},
+            {"CMakeLists.txt", "meson.build", "Makefile", "compile_commands.json"}
+        },
+        {
+            "/run/media/jpereiratrindade/labeco10T/dev/python",
+            "Python",
+            {"Auto", "Python"},
+            {"pyproject.toml", "requirements.txt", "setup.py", "Pipfile"}
+        }
+    };
+
+    SyncAutoDiscoveredProjects(store, monitoredRoots);
+
     labgestao::AppUI app(store, dataPath);
+    auto nextFolderSync = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 
     bool running = true;
     while (running) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= nextFolderSync) {
+            SyncAutoDiscoveredProjects(store, monitoredRoots);
+            nextFolderSync = now + std::chrono::seconds(5);
+        }
+
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             ImGui_ImplSDL2_ProcessEvent(&e);
@@ -207,7 +341,10 @@ int main(int /*argc*/, char** /*argv*/) {
         if (app.shouldExit()) running = false;
 
         ImGui::Render();
-        glViewport(0, 0, (int)io.DisplaySize.x, (int)io.DisplaySize.y);
+        int drawableWidth = 0;
+        int drawableHeight = 0;
+        SDL_GL_GetDrawableSize(window, &drawableWidth, &drawableHeight);
+        glViewport(0, 0, drawableWidth, drawableHeight);
         glClearColor(0.07f, 0.08f, 0.11f, 1.f);
         glClear(GL_COLOR_BUFFER_BIT);
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
