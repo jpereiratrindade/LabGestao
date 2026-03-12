@@ -1,0 +1,22 @@
+# Build and temporary files
+build/
+bin/
+obj/
+*.o
+*.a
+*.so
+
+# Data and local settings
+data/*.json
+!data/.gitkeep
+imgui.ini
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# System files
+.DS_Store
+Thumbs.db
