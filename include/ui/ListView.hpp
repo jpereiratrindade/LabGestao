@@ -17,6 +17,7 @@ public:
 private:
     void renderTable();
     void renderDetailPanel();
+    void renderOpenInEditorSection(const Project& p);
     void renderAdrSection(Project& p);
     void renderDaiSection(Project& p);
     void renderMetricsSection(const Project& p);
@@ -58,6 +59,11 @@ private:
     char  m_daiOwner[128]{};
     char  m_daiDueAt[32]{};
     char  m_daiNotes[512]{};
+
+    // Editor integration
+    int   m_editorChoice{0}; // 0=codium, 1=code, 2=system, 3=custom
+    char  m_customEditorCmd[256]{};
+    std::string m_editorMessage;
 };
 
 } // namespace labgestao

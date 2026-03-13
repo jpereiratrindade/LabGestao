@@ -7,8 +7,11 @@
 #include <cstring>
 #include <cstdio>
 #include <utility>
+#include <cstdlib>
+#include <filesystem>
 
 namespace labgestao {
+namespace fs = std::filesystem;
 
 static const char* kStatusLabels[] = { "Backlog", "Em Andamento", "Revisão", "Concluído", "Pausado" };
 static const char* kDaiKinds[] = { "Decision", "Action", "Impediment" };
@@ -28,6 +31,9 @@ static std::string nowISO() {
     strftime(buf, sizeof(buf), "%Y-%m-%d", &tm_buf);
     return std::string(buf);
 }
+
+static std::string shellEscapeSingleQuoted(const std::string& s);
+static bool launchDetachedShellCommand(const std::string& cmd);
 
 ListView::ListView(ProjectStore& store, CreationDefaults defaults)
     : m_store(store)
@@ -200,6 +206,8 @@ void ListView::renderDetailPanel() {
     }
 
     ImGui::Spacing();
+    renderOpenInEditorSection(p);
+    ImGui::Spacing();
     renderAdrSection(p);
     ImGui::Spacing();
     renderDaiSection(p);
@@ -225,6 +233,73 @@ void ListView::renderDetailPanel() {
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.1f, 0.1f, 1.f));
     if (ImGui::Button("Excluir")) m_showDeleteConfirm = true;
     ImGui::PopStyleColor();
+}
+
+void ListView::renderOpenInEditorSection(const Project& p) {
+    if (!ImGui::CollapsingHeader("Abrir no Editor", ImGuiTreeNodeFlags_DefaultOpen)) return;
+
+    static const char* kEditorLabels[] = {
+        "VSCodium",
+        "VS Code",
+        "Sistema (xdg-open)",
+        "Custom"
+    };
+
+    ImGui::SetNextItemWidth(220.f);
+    if (ImGui::BeginCombo("Editor", kEditorLabels[m_editorChoice])) {
+        for (int i = 0; i < 4; i++) {
+            if (ImGui::Selectable(kEditorLabels[i], m_editorChoice == i)) {
+                m_editorChoice = i;
+            }
+        }
+        ImGui::EndCombo();
+    }
+
+    if (m_editorChoice == 3) {
+        ImGui::SetNextItemWidth(340.f);
+        ImGui::InputTextWithHint("##custom_editor", "Comando custom (use {path})", m_customEditorCmd, sizeof(m_customEditorCmd));
+    }
+
+    std::string path = p.source_path;
+    if (path.empty() && !p.source_root.empty()) path = p.source_root;
+    const bool hasPath = !path.empty() && fs::exists(path);
+
+    ImGui::TextDisabled("Path: %s", hasPath ? path.c_str() : "(nao disponivel)");
+    if (!m_editorMessage.empty()) {
+        ImGui::TextWrapped("%s", m_editorMessage.c_str());
+    }
+
+    if (!hasPath) ImGui::BeginDisabled();
+    if (ImGui::Button("Abrir Projeto")) {
+        const std::string escapedPath = shellEscapeSingleQuoted(path);
+        std::string cmd;
+        if (m_editorChoice == 0) cmd = "codium " + escapedPath;
+        if (m_editorChoice == 1) cmd = "code " + escapedPath;
+        if (m_editorChoice == 2) cmd = "xdg-open " + escapedPath;
+        if (m_editorChoice == 3) {
+            std::string custom = m_customEditorCmd;
+            if (custom.empty()) {
+                m_editorMessage = "Comando custom vazio.";
+                if (!hasPath) ImGui::EndDisabled();
+                return;
+            }
+            const std::string token = "{path}";
+            const size_t pos = custom.find(token);
+            if (pos != std::string::npos) {
+                custom.replace(pos, token.size(), escapedPath);
+            } else {
+                custom += " " + escapedPath;
+            }
+            cmd = custom;
+        }
+
+        if (launchDetachedShellCommand(cmd)) {
+            m_editorMessage = "Comando enviado: " + cmd;
+        } else {
+            m_editorMessage = "Falha ao executar comando do editor.";
+        }
+    }
+    if (!hasPath) ImGui::EndDisabled();
 }
 
 void ListView::renderAdrSection(Project& p) {
@@ -361,6 +436,23 @@ static std::vector<std::string> splitTags(const char* s) {
         if (!t.empty()) out.push_back(t);
     }
     return out;
+}
+
+static std::string shellEscapeSingleQuoted(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 8);
+    out.push_back('\'');
+    for (char c : s) {
+        if (c == '\'') out += "'\\''";
+        else out.push_back(c);
+    }
+    out.push_back('\'');
+    return out;
+}
+
+static bool launchDetachedShellCommand(const std::string& cmd) {
+    const std::string wrapped = cmd + " >/dev/null 2>&1 &";
+    return std::system(wrapped.c_str()) == 0;
 }
 
 // ── Create Modal ──────────────────────────────────────────────────────────────
