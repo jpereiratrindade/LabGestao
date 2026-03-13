@@ -9,6 +9,7 @@
 #include <utility>
 #include <cstdlib>
 #include <filesystem>
+#include <cctype>
 
 namespace labgestao {
 namespace fs = std::filesystem;
@@ -34,6 +35,8 @@ static std::string nowISO() {
 
 static std::string shellEscapeSingleQuoted(const std::string& s);
 static bool launchDetachedShellCommand(const std::string& cmd);
+static std::string slugifyProjectName(const std::string& name);
+static std::string resolveProjectPathForOpen(const Project& p, const ListView::CreationDefaults& defaults);
 
 ListView::ListView(ProjectStore& store, CreationDefaults defaults)
     : m_store(store)
@@ -260,8 +263,7 @@ void ListView::renderOpenInEditorSection(const Project& p) {
         ImGui::InputTextWithHint("##custom_editor", "Comando custom (use {path})", m_customEditorCmd, sizeof(m_customEditorCmd));
     }
 
-    std::string path = p.source_path;
-    if (path.empty() && !p.source_root.empty()) path = p.source_root;
+    const std::string path = resolveProjectPathForOpen(p, m_creationDefaults);
     const bool hasPath = !path.empty() && fs::exists(path);
 
     ImGui::TextDisabled("Path: %s", hasPath ? path.c_str() : "(nao disponivel)");
@@ -453,6 +455,48 @@ static std::string shellEscapeSingleQuoted(const std::string& s) {
 static bool launchDetachedShellCommand(const std::string& cmd) {
     const std::string wrapped = cmd + " >/dev/null 2>&1 &";
     return std::system(wrapped.c_str()) == 0;
+}
+
+static std::string slugifyProjectName(const std::string& name) {
+    std::string out;
+    out.reserve(name.size());
+    bool lastSep = false;
+    for (unsigned char c : name) {
+        if (std::isalnum(c)) {
+            out.push_back(static_cast<char>(std::tolower(c)));
+            lastSep = false;
+        } else if ((std::isspace(c) || c == '-' || c == '_') && !lastSep) {
+            out.push_back('_');
+            lastSep = true;
+        }
+    }
+    while (!out.empty() && out.back() == '_') out.pop_back();
+    return out;
+}
+
+static std::string resolveProjectPathForOpen(const Project& p, const ListView::CreationDefaults& defaults) {
+    if (!p.source_path.empty() && fs::exists(p.source_path)) return p.source_path;
+
+    std::vector<fs::path> roots;
+    if (!p.source_root.empty()) roots.emplace_back(p.source_root);
+    if (!defaults.cppRoot.empty()) roots.emplace_back(defaults.cppRoot);
+    if (!defaults.pythonRoot.empty()) roots.emplace_back(defaults.pythonRoot);
+
+    std::vector<std::string> candidates;
+    if (!p.name.empty()) candidates.push_back(p.name);
+    const std::string slug = slugifyProjectName(p.name);
+    if (!slug.empty() && std::find(candidates.begin(), candidates.end(), slug) == candidates.end()) {
+        candidates.push_back(slug);
+    }
+
+    for (const auto& root : roots) {
+        if (!fs::exists(root) || !fs::is_directory(root)) continue;
+        for (const auto& c : candidates) {
+            const fs::path path = root / c;
+            if (fs::exists(path) && fs::is_directory(path)) return path.string();
+        }
+    }
+    return {};
 }
 
 // ── Create Modal ──────────────────────────────────────────────────────────────
