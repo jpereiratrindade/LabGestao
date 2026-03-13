@@ -6,10 +6,40 @@
 #include <random>
 #include <sstream>
 #include <iomanip>
+#include <ctime>
 
 using json = nlohmann::json;
 
 namespace labgestao {
+
+static std::string todayISO() {
+    std::time_t t = std::time(nullptr);
+    std::tm tm_buf {};
+    localtime_r(&t, &tm_buf);
+    char buf[11] = {};
+    std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tm_buf);
+    return std::string(buf);
+}
+
+static int daysSinceEpoch(const std::string& isoDate) {
+    if (isoDate.size() < 10) return -1;
+    std::tm tm_buf {};
+    std::istringstream ss(isoDate.substr(0, 10));
+    ss >> std::get_time(&tm_buf, "%Y-%m-%d");
+    if (ss.fail()) return -1;
+    tm_buf.tm_hour = 12;
+    tm_buf.tm_isdst = -1;
+    std::time_t tt = std::mktime(&tm_buf);
+    if (tt < 0) return -1;
+    return static_cast<int>(tt / 86400);
+}
+
+static float daysDiff(const std::string& from, const std::string& to) {
+    const int a = daysSinceEpoch(from);
+    const int b = daysSinceEpoch(to);
+    if (a < 0 || b < 0) return 0.f;
+    return static_cast<float>(b - a);
+}
 
 // ── ID generation ───────────────────────────────────────────────────────────
 std::string ProjectStore::generateId() {
@@ -58,6 +88,39 @@ std::optional<Project*> ProjectStore::findById(const std::string& id) {
 
 // ── JSON Helpers ─────────────────────────────────────────────────────────────
 static json projectToJson(const Project& p) {
+    auto adrToJson = [](const Project::AdrEntry& adr) {
+        json j;
+        j["id"] = adr.id;
+        j["title"] = adr.title;
+        j["context"] = adr.context;
+        j["decision"] = adr.decision;
+        j["consequences"] = adr.consequences;
+        j["created_at"] = adr.created_at;
+        return j;
+    };
+
+    auto daiToJson = [](const Project::DaiEntry& dai) {
+        json j;
+        j["id"] = dai.id;
+        j["kind"] = dai.kind;
+        j["title"] = dai.title;
+        j["owner"] = dai.owner;
+        j["notes"] = dai.notes;
+        j["opened_at"] = dai.opened_at;
+        j["due_at"] = dai.due_at;
+        j["closed"] = dai.closed;
+        j["closed_at"] = dai.closed_at;
+        return j;
+    };
+
+    auto transitionToJson = [](const Project::StatusTransition& tr) {
+        json j;
+        j["from"] = tr.from;
+        j["to"] = tr.to;
+        j["moved_at"] = tr.moved_at;
+        return j;
+    };
+
     json j;
     j["id"]          = p.id;
     j["name"]        = p.name;
@@ -72,10 +135,49 @@ static json projectToJson(const Project& p) {
     j["auto_discovered"] = p.auto_discovered;
     j["source_path"]     = p.source_path;
     j["source_root"]     = p.source_root;
+    j["adrs"] = json::array();
+    for (const auto& adr : p.adrs) j["adrs"].push_back(adrToJson(adr));
+    j["dais"] = json::array();
+    for (const auto& dai : p.dais) j["dais"].push_back(daiToJson(dai));
+    j["status_history"] = json::array();
+    for (const auto& tr : p.status_history) j["status_history"].push_back(transitionToJson(tr));
     return j;
 }
 
 static Project projectFromJson(const json& j) {
+    auto adrFromJson = [](const json& v) {
+        Project::AdrEntry adr;
+        adr.id = v.value("id", "");
+        adr.title = v.value("title", "");
+        adr.context = v.value("context", "");
+        adr.decision = v.value("decision", "");
+        adr.consequences = v.value("consequences", "");
+        adr.created_at = v.value("created_at", "");
+        return adr;
+    };
+
+    auto daiFromJson = [](const json& v) {
+        Project::DaiEntry dai;
+        dai.id = v.value("id", "");
+        dai.kind = v.value("kind", "Action");
+        dai.title = v.value("title", "");
+        dai.owner = v.value("owner", "");
+        dai.notes = v.value("notes", "");
+        dai.opened_at = v.value("opened_at", "");
+        dai.due_at = v.value("due_at", "");
+        dai.closed = v.value("closed", false);
+        dai.closed_at = v.value("closed_at", "");
+        return dai;
+    };
+
+    auto transitionFromJson = [](const json& v) {
+        Project::StatusTransition tr;
+        tr.from = v.value("from", "Backlog");
+        tr.to = v.value("to", "Backlog");
+        tr.moved_at = v.value("moved_at", "");
+        return tr;
+    };
+
     Project p;
     p.id          = j.value("id",          "");
     p.name        = j.value("name",        "");
@@ -90,7 +192,106 @@ static Project projectFromJson(const json& j) {
     p.auto_discovered = j.value("auto_discovered", false);
     p.source_path     = j.value("source_path",     "");
     p.source_root     = j.value("source_root",     "");
+    if (j.contains("adrs") && j["adrs"].is_array()) {
+        for (const auto& v : j["adrs"]) p.adrs.push_back(adrFromJson(v));
+    }
+    if (j.contains("dais") && j["dais"].is_array()) {
+        for (const auto& v : j["dais"]) p.dais.push_back(daiFromJson(v));
+    }
+    if (j.contains("status_history") && j["status_history"].is_array()) {
+        for (const auto& v : j["status_history"]) p.status_history.push_back(transitionFromJson(v));
+    }
     return p;
+}
+
+void ProjectStore::recordStatusChange(Project& p, ProjectStatus from, ProjectStatus to, const std::string& movedAt) {
+    if (from == to) return;
+    Project::StatusTransition tr;
+    tr.from = statusKey(from);
+    tr.to = statusKey(to);
+    tr.moved_at = movedAt.empty() ? todayISO() : movedAt;
+    p.status_history.push_back(std::move(tr));
+    m_dirty = true;
+}
+
+bool ProjectStore::canMoveToStatus(const Project& p, ProjectStatus to, std::string* reason) const {
+    const auto fail = [&reason](const char* msg) {
+        if (reason) *reason = msg;
+        return false;
+    };
+
+    if (to == ProjectStatus::Doing) {
+        if (p.description.empty()) return fail("DoR: descricao obrigatoria.");
+        if (p.category.empty()) return fail("DoR: categoria obrigatoria.");
+        if (p.tags.empty()) return fail("DoR: ao menos uma tag obrigatoria.");
+    }
+
+    if (to == ProjectStatus::Done) {
+        if (p.adrs.empty()) return fail("DoD: exige ao menos um ADR.");
+        for (const auto& dai : p.dais) {
+            if (!dai.closed) return fail("DoD: existem itens DAI em aberto.");
+        }
+    }
+
+    if (reason) reason->clear();
+    return true;
+}
+
+ProjectStore::ProjectFlowMetrics ProjectStore::computeProjectFlowMetrics(const Project& p, const std::string& todayIso) const {
+    ProjectFlowMetrics m;
+    const std::string today = todayIso.empty() ? todayISO() : todayIso;
+    m.status_transitions = static_cast<int>(p.status_history.size());
+
+    for (const auto& dai : p.dais) {
+        if (!dai.closed) {
+            m.open_dai_items++;
+            if (dai.kind == "Impediment") m.open_impediments++;
+        }
+    }
+
+    m.aging_days = daysDiff(p.created_at, today);
+
+    std::string firstDoingDate;
+    std::string doneDate;
+    for (const auto& tr : p.status_history) {
+        if (firstDoingDate.empty() && tr.to == "Doing") firstDoingDate = tr.moved_at;
+        if (tr.to == "Done") doneDate = tr.moved_at;
+    }
+
+    if (!doneDate.empty()) {
+        m.lead_time_days = daysDiff(p.created_at, doneDate);
+        if (!firstDoingDate.empty()) m.cycle_time_days = daysDiff(firstDoingDate, doneDate);
+    } else if (!firstDoingDate.empty()) {
+        m.cycle_time_days = daysDiff(firstDoingDate, today);
+    }
+
+    return m;
+}
+
+ProjectStore::GlobalFlowMetrics ProjectStore::computeGlobalFlowMetrics(const std::string& todayIso) const {
+    GlobalFlowMetrics g;
+    const std::string today = todayIso.empty() ? todayISO() : todayIso;
+    const int todayDays = daysSinceEpoch(today);
+    float agingSum = 0.f;
+
+    for (const auto& p : m_projects) {
+        g.total_projects++;
+        if (p.status == ProjectStatus::Done) g.done_projects++;
+        if (p.status == ProjectStatus::Doing || p.status == ProjectStatus::Review) g.wip_projects++;
+
+        const auto metrics = computeProjectFlowMetrics(p, today);
+        agingSum += metrics.aging_days;
+        g.open_impediments += metrics.open_impediments;
+
+        for (const auto& tr : p.status_history) {
+            if (tr.to != "Done") continue;
+            const int trDay = daysSinceEpoch(tr.moved_at);
+            if (trDay >= 0 && todayDays >= 0 && (todayDays - trDay) <= 7) g.throughput_last_7d++;
+        }
+    }
+
+    if (g.total_projects > 0) g.avg_aging_days = agingSum / static_cast<float>(g.total_projects);
+    return g;
 }
 
 // ── Persistência ─────────────────────────────────────────────────────────────

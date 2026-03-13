@@ -39,7 +39,7 @@ static void badgeStatus(ProjectStatus s) {
 void ListView::render() {
     // Toolbar
     ImGui::SetNextItemWidth(240.f);
-    ImGui::InputTextWithHint("##search", "🔍  Buscar projeto...", m_searchBuf, sizeof(m_searchBuf));
+    ImGui::InputTextWithHint("##search", "Buscar projeto...", m_searchBuf, sizeof(m_searchBuf));
     ImGui::SameLine();
     ImGui::SetNextItemWidth(140.f);
     if (ImGui::BeginCombo("##filterstatus", m_filterStatus < 0 ? "Todos status" : kStatusLabels[m_filterStatus])) {
@@ -52,7 +52,7 @@ void ListView::render() {
         ImGui::EndCombo();
     }
     ImGui::SameLine();
-    if (ImGui::Button("＋ Novo Projeto")) {
+    if (ImGui::Button("+ Novo Projeto")) {
         m_showCreate = true;
         m_formName[0]     = '\0';
         m_formDesc[0]     = '\0';
@@ -143,9 +143,9 @@ void ListView::renderDetailPanel() {
     Project& p = **opt;
 
     // Close button
-    float bw = ImGui::CalcTextSize("✕").x + 8.f;
+    float bw = ImGui::CalcTextSize("X").x + 8.f;
     ImGui::SetCursorPosX(ImGui::GetContentRegionAvail().x - bw);
-    if (ImGui::SmallButton("✕")) { m_selectedId.clear(); return; }
+    if (ImGui::SmallButton("X")) { m_selectedId.clear(); return; }
 
     ImGui::Spacing();
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.55f, 0.75f, 1.f, 1.f));
@@ -159,13 +159,13 @@ void ListView::renderDetailPanel() {
 
     ImGui::Spacing();
     ImGui::TextDisabled("Descrição:");
-    ImGui::TextWrapped("%s", p.description.empty() ? "—" : p.description.c_str());
+    ImGui::TextWrapped("%s", p.description.empty() ? "-" : p.description.c_str());
 
     ImGui::Spacing();
     if (!p.tags.empty()) {
         ImGui::TextDisabled("Tags:");
         for (const auto& t : p.tags) {
-            ImGui::TextDisabled("  • %s", t.c_str());
+            ImGui::TextDisabled("  - %s", t.c_str());
         }
     }
 
@@ -175,14 +175,14 @@ void ListView::renderDetailPanel() {
         for (const auto& cid : p.connections) {
             auto copt = m_store.findById(cid);
             std::string label = copt ? (*copt)->name : cid;
-            ImGui::TextDisabled("  ↔ %s", label.c_str());
+            ImGui::TextDisabled("  <-> %s", label.c_str());
         }
     }
 
     ImGui::Spacing();
     ImGui::Separator();
 
-    if (ImGui::Button("✏  Editar")) {
+    if (ImGui::Button("Editar")) {
         snprintf(m_formName,     sizeof(m_formName),     "%s", p.name.c_str());
         snprintf(m_formDesc,     sizeof(m_formDesc),     "%s", p.description.c_str());
         snprintf(m_formCategory, sizeof(m_formCategory), "%s", p.category.c_str());
@@ -195,7 +195,7 @@ void ListView::renderDetailPanel() {
     }
     ImGui::SameLine();
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.1f, 0.1f, 1.f));
-    if (ImGui::Button("🗑  Excluir")) m_showDeleteConfirm = true;
+    if (ImGui::Button("Excluir")) m_showDeleteConfirm = true;
     ImGui::PopStyleColor();
 }
 

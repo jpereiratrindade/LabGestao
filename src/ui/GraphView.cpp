@@ -156,7 +156,7 @@ void GraphView::render() {
             ImGui::SameLine();
             ImGui::Separator();
             ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.f, 1.f), "Nó: %s", sel.name.c_str());
-            ImGui::SameLine(); ImGui::TextDisabled("— conectar a:");
+            ImGui::SameLine(); ImGui::TextDisabled("- conectar a:");
             for (auto& q : projs) {
                 if (q.id == sel.id) continue;
                 bool connected = std::find(sel.connections.begin(), sel.connections.end(), q.id) != sel.connections.end();

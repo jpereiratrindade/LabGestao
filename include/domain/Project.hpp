@@ -43,6 +43,33 @@ inline const char* statusKey(ProjectStatus s) {
 }
 
 struct Project {
+    struct AdrEntry {
+        std::string id;
+        std::string title;
+        std::string context;
+        std::string decision;
+        std::string consequences;
+        std::string created_at;
+    };
+
+    struct DaiEntry {
+        std::string id;
+        std::string kind; // "Decision", "Action", "Impediment"
+        std::string title;
+        std::string owner;
+        std::string notes;
+        std::string opened_at;
+        std::string due_at;
+        bool closed{false};
+        std::string closed_at;
+    };
+
+    struct StatusTransition {
+        std::string from;
+        std::string to;
+        std::string moved_at;
+    };
+
     std::string id;
     std::string name;
     std::string description;
@@ -58,6 +85,10 @@ struct Project {
     bool auto_discovered{false};
     std::string source_path;
     std::string source_root;
+
+    std::vector<AdrEntry> adrs;
+    std::vector<DaiEntry> dais;
+    std::vector<StatusTransition> status_history;
 };
 
 } // namespace labgestao

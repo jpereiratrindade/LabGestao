@@ -93,10 +93,10 @@ void AppUI::render() {
 
     // Title bar area
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.75f, 1.f, 1.f));
-    ImGui::Text("  📂  LabGestao");
+    ImGui::Text("  [LabGestao]");
     ImGui::PopStyleColor();
     ImGui::SameLine();
-    ImGui::TextDisabled("— Gestão de Projetos");
+    ImGui::TextDisabled("- Gestao de Projetos");
     ImGui::SameLine(ImGui::GetContentRegionAvail().x - 160.f);
     ImGui::TextDisabled("%zu projeto(s)", m_store.getAll().size());
 
@@ -104,17 +104,17 @@ void AppUI::render() {
 
     // Tab bar
     if (ImGui::BeginTabBar("##MainTabs", ImGuiTabBarFlags_None)) {
-        if (ImGui::BeginTabItem("  📋  Projetos  ")) {
+        if (ImGui::BeginTabItem("  [Projetos]  ")) {
             ImGui::Spacing();
             m_list.render();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("  📌  Kanban  ")) {
+        if (ImGui::BeginTabItem("  [Kanban]  ")) {
             ImGui::Spacing();
             m_kanban.render();
             ImGui::EndTabItem();
         }
-        if (ImGui::BeginTabItem("  🔗  Grafo  ")) {
+        if (ImGui::BeginTabItem("  [Grafo]  ")) {
             ImGui::Spacing();
             m_graph.render();
             ImGui::EndTabItem();
