@@ -38,6 +38,7 @@ target_link_libraries(imgui PUBLIC SDL2::SDL2 OpenGL::GL)
 # ── Domain library ────────────────────────────────────────────────────────────
 add_library(labgestao_domain STATIC
     src/domain/ProjectStore.cpp
+    src/domain/ProjectScaffold.cpp
 )
 
 target_include_directories(labgestao_domain PUBLIC
