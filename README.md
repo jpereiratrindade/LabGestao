@@ -40,3 +40,16 @@ systemctl reboot
 - `mesa-libGL-devel`
 - `curl`
 - `ninja-build`
+
+## Scaffold de novo projeto (C++/Python)
+
+Na tela `Projetos`, ao clicar em `+ Novo Projeto`, voce pode:
+
+- Escolher `Template`: `Nenhum`, `C++` ou `Python`
+- Marcar `Criar estrutura base no disco`
+- Informar o `Diretorio base` (ou usar o padrao)
+
+Estrutura minima gerada:
+
+- `C++`: `CMakeLists.txt`, `README.md`, `.gitignore`, `src/main.cpp`, `include/`, `tests/`
+- `Python`: `pyproject.toml`, `README.md`, `.gitignore`, `src/<pacote>/`, `tests/test_smoke.py`
