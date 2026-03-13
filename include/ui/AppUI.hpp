@@ -16,12 +16,15 @@ public:
 private:
     void applyTheme();
     void renderFlowMetricsTab();
+    bool exportFlowMetricsCsv(int windowDays, std::string* outputPath, std::string* errorMsg) const;
 
     ProjectStore& m_store;
     std::string   m_dataPath;
     ListView      m_list;
     KanbanView    m_kanban;
     GraphView     m_graph;
+    int           m_metricsPeriodIdx{0};
+    std::string   m_metricsExportMessage;
     bool          m_themeApplied{false};
     bool          m_requestExit{false};
 };

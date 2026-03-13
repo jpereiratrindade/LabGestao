@@ -268,8 +268,9 @@ ProjectStore::ProjectFlowMetrics ProjectStore::computeProjectFlowMetrics(const P
     return m;
 }
 
-ProjectStore::GlobalFlowMetrics ProjectStore::computeGlobalFlowMetrics(const std::string& todayIso) const {
+ProjectStore::GlobalFlowMetrics ProjectStore::computeGlobalFlowMetrics(const std::string& todayIso, int throughputWindowDays) const {
     GlobalFlowMetrics g;
+    g.throughput_window_days = throughputWindowDays > 0 ? throughputWindowDays : 7;
     const std::string today = todayIso.empty() ? todayISO() : todayIso;
     const int todayDays = daysSinceEpoch(today);
     float agingSum = 0.f;
@@ -286,7 +287,7 @@ ProjectStore::GlobalFlowMetrics ProjectStore::computeGlobalFlowMetrics(const std
         for (const auto& tr : p.status_history) {
             if (tr.to != "Done") continue;
             const int trDay = daysSinceEpoch(tr.moved_at);
-            if (trDay >= 0 && todayDays >= 0 && (todayDays - trDay) <= 7) g.throughput_last_7d++;
+            if (trDay >= 0 && todayDays >= 0 && (todayDays - trDay) <= g.throughput_window_days) g.throughput_in_window++;
         }
     }
 

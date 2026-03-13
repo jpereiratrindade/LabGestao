@@ -21,7 +21,8 @@ public:
         int total_projects{0};
         int wip_projects{0};
         int done_projects{0};
-        int throughput_last_7d{0};
+        int throughput_in_window{0};
+        int throughput_window_days{7};
         float avg_aging_days{0.f};
         int open_impediments{0};
     };
@@ -40,7 +41,7 @@ public:
     void recordStatusChange(Project& p, ProjectStatus from, ProjectStatus to, const std::string& movedAt = "");
     bool canMoveToStatus(const Project& p, ProjectStatus to, std::string* reason = nullptr) const;
     ProjectFlowMetrics computeProjectFlowMetrics(const Project& p, const std::string& todayIso = "") const;
-    GlobalFlowMetrics computeGlobalFlowMetrics(const std::string& todayIso = "") const;
+    GlobalFlowMetrics computeGlobalFlowMetrics(const std::string& todayIso = "", int throughputWindowDays = 7) const;
 
     // Persistência
     bool loadFromJson(const std::string& path);

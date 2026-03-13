@@ -1,7 +1,26 @@
 #include "ui/AppUI.hpp"
 #include "imgui.h"
+#include <array>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
+#include <iomanip>
+#include <sstream>
+
+namespace fs = std::filesystem;
 
 namespace labgestao {
+
+namespace {
+std::string todayISO() {
+    std::time_t t = std::time(nullptr);
+    std::tm tm_buf {};
+    localtime_r(&t, &tm_buf);
+    char buf[11] = {};
+    std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tm_buf);
+    return std::string(buf);
+}
+}
 
 AppUI::AppUI(ProjectStore& store, const std::string& dataPath)
     : m_store(store)
@@ -137,14 +156,43 @@ void AppUI::render() {
 }
 
 void AppUI::renderFlowMetricsTab() {
-    const auto gm = m_store.computeGlobalFlowMetrics();
+    static constexpr std::array<int, 3> kWindows = {7, 14, 30};
+    static const char* kWindowLabels[] = {"7 dias", "14 dias", "30 dias"};
+    const int periodDays = kWindows[static_cast<std::size_t>(m_metricsPeriodIdx)];
+
+    ImGui::SetNextItemWidth(130.f);
+    ImGui::TextUnformatted("Periodo:");
+    ImGui::SameLine();
+    if (ImGui::BeginCombo("##metric_period", kWindowLabels[m_metricsPeriodIdx])) {
+        for (int i = 0; i < static_cast<int>(kWindows.size()); i++) {
+            if (ImGui::Selectable(kWindowLabels[i], m_metricsPeriodIdx == i)) {
+                m_metricsPeriodIdx = i;
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Exportar CSV")) {
+        std::string outPath;
+        std::string err;
+        if (exportFlowMetricsCsv(periodDays, &outPath, &err)) {
+            m_metricsExportMessage = "CSV salvo em: " + outPath;
+        } else {
+            m_metricsExportMessage = "Falha ao exportar CSV: " + err;
+        }
+    }
+    if (!m_metricsExportMessage.empty()) {
+        ImGui::TextWrapped("%s", m_metricsExportMessage.c_str());
+    }
+
+    const auto gm = m_store.computeGlobalFlowMetrics("", periodDays);
     ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.f, 1.f), "Indicadores Globais de Fluxo");
     ImGui::Separator();
 
     ImGui::Text("Projetos totais: %d", gm.total_projects);
     ImGui::Text("Projetos em WIP: %d", gm.wip_projects);
     ImGui::Text("Projetos concluidos: %d", gm.done_projects);
-    ImGui::Text("Throughput (7 dias): %d", gm.throughput_last_7d);
+    ImGui::Text("Throughput (%d dias): %d", periodDays, gm.throughput_in_window);
     ImGui::Text("Aging medio: %.1f dias", gm.avg_aging_days);
     ImGui::Text("Impedimentos abertos: %d", gm.open_impediments);
 
@@ -159,6 +207,57 @@ void AppUI::renderFlowMetricsTab() {
     for (int i = 0; i < 5; i++) {
         ImGui::BulletText("%s: %d", labels[i], counts[i]);
     }
+}
+
+bool AppUI::exportFlowMetricsCsv(int windowDays, std::string* outputPath, std::string* errorMsg) const {
+    const fs::path outDir = fs::path(m_dataPath).parent_path().empty() ? fs::path("data") : fs::path(m_dataPath).parent_path();
+    std::error_code ec;
+    fs::create_directories(outDir, ec);
+    if (ec) {
+        if (errorMsg) *errorMsg = "nao foi possivel criar diretorio de saida";
+        return false;
+    }
+
+    const std::string today = todayISO();
+    const fs::path outFile = outDir / ("metrics-" + today + "-" + std::to_string(windowDays) + "d.csv");
+    std::ofstream out(outFile);
+    if (!out.is_open()) {
+        if (errorMsg) *errorMsg = "nao foi possivel abrir arquivo para escrita";
+        return false;
+    }
+
+    const auto gm = m_store.computeGlobalFlowMetrics(today, windowDays);
+    out << "section,key,value\n";
+    out << "global,total_projects," << gm.total_projects << "\n";
+    out << "global,wip_projects," << gm.wip_projects << "\n";
+    out << "global,done_projects," << gm.done_projects << "\n";
+    out << "global,throughput_" << windowDays << "d," << gm.throughput_in_window << "\n";
+    out << "global,avg_aging_days," << std::fixed << std::setprecision(2) << gm.avg_aging_days << "\n";
+    out << "global,open_impediments," << gm.open_impediments << "\n";
+
+    out << "\nprojects,id,name,status,lead_time_days,cycle_time_days,aging_days,status_transitions,open_dai_items,open_impediments\n";
+    for (const auto& p : m_store.getAll()) {
+        const auto m = m_store.computeProjectFlowMetrics(p, today);
+        out << "project,"
+            << p.id << ","
+            << "\"" << p.name << "\"" << ","
+            << statusKey(p.status) << ","
+            << std::fixed << std::setprecision(2) << m.lead_time_days << ","
+            << std::fixed << std::setprecision(2) << m.cycle_time_days << ","
+            << std::fixed << std::setprecision(2) << m.aging_days << ","
+            << m.status_transitions << ","
+            << m.open_dai_items << ","
+            << m.open_impediments << "\n";
+    }
+
+    if (!out.good()) {
+        if (errorMsg) *errorMsg = "erro durante escrita do CSV";
+        return false;
+    }
+
+    if (outputPath) *outputPath = outFile.string();
+    if (errorMsg) errorMsg->clear();
+    return true;
 }
 
 } // namespace labgestao
