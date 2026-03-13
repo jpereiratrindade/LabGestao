@@ -15,6 +15,7 @@ public:
 
 private:
     void applyTheme();
+    void renderFlowMetricsTab();
 
     ProjectStore& m_store;
     std::string   m_dataPath;

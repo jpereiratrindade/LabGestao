@@ -119,6 +119,11 @@ void AppUI::render() {
             m_graph.render();
             ImGui::EndTabItem();
         }
+        if (ImGui::BeginTabItem("  [Metricas]  ")) {
+            ImGui::Spacing();
+            renderFlowMetricsTab();
+            ImGui::EndTabItem();
+        }
         ImGui::EndTabBar();
     }
 
@@ -128,6 +133,31 @@ void AppUI::render() {
     if (m_store.isDirty()) {
         m_store.saveToJson(m_dataPath);
         m_store.clearDirty();
+    }
+}
+
+void AppUI::renderFlowMetricsTab() {
+    const auto gm = m_store.computeGlobalFlowMetrics();
+    ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.f, 1.f), "Indicadores Globais de Fluxo");
+    ImGui::Separator();
+
+    ImGui::Text("Projetos totais: %d", gm.total_projects);
+    ImGui::Text("Projetos em WIP: %d", gm.wip_projects);
+    ImGui::Text("Projetos concluidos: %d", gm.done_projects);
+    ImGui::Text("Throughput (7 dias): %d", gm.throughput_last_7d);
+    ImGui::Text("Aging medio: %.1f dias", gm.avg_aging_days);
+    ImGui::Text("Impedimentos abertos: %d", gm.open_impediments);
+
+    ImGui::Spacing();
+    ImGui::SeparatorText("Distribuicao por Status");
+    int counts[5] = {0, 0, 0, 0, 0};
+    for (const auto& p : m_store.getAll()) {
+        const int idx = static_cast<int>(p.status);
+        if (idx >= 0 && idx < 5) counts[idx]++;
+    }
+    const char* labels[5] = {"Backlog", "Em Andamento", "Revisao", "Concluido", "Pausado"};
+    for (int i = 0; i < 5; i++) {
+        ImGui::BulletText("%s: %d", labels[i], counts[i]);
     }
 }
 
