@@ -31,6 +31,7 @@ private:
     char  m_formCategory[128]{};
     char  m_formTags[512]{};
     int   m_formStatus{0};
+    std::string m_formError;
 };
 
 } // namespace labgestao

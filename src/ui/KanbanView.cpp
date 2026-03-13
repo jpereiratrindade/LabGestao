@@ -23,12 +23,41 @@ static const ImVec4 kColBgColors[] = {
 KanbanView::KanbanView(ProjectStore& store) : m_store(store) {}
 
 void KanbanView::render() {
+    renderRuleViolationPopup();
+
     ImVec2 avail = ImGui::GetContentRegionAvail();
     float colWidth = (avail.x - 40.f) / 5.f;
 
     for (int col = 0; col < 5; col++) {
         if (col > 0) ImGui::SameLine();
         renderColumn(static_cast<ProjectStatus>(col), colWidth);
+    }
+}
+
+bool KanbanView::tryMoveProjectToStatus(Project& p, ProjectStatus to) {
+    if (p.status == to) return true;
+    std::string reason;
+    if (!m_store.canMoveToStatus(p, to, &reason)) {
+        m_ruleViolationMessage = reason.empty() ? "Movimento bloqueado por regra." : reason;
+        ImGui::OpenPopup("Regra de Fluxo");
+        return false;
+    }
+    const ProjectStatus from = p.status;
+    p.status = to;
+    m_store.recordStatusChange(p, from, to);
+    m_store.update(p);
+    return true;
+}
+
+void KanbanView::renderRuleViolationPopup() {
+    if (ImGui::BeginPopupModal("Regra de Fluxo", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextWrapped("%s", m_ruleViolationMessage.c_str());
+        ImGui::Separator();
+        if (ImGui::Button("OK", ImVec2(140.f, 0.f))) {
+            m_ruleViolationMessage.clear();
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
 }
 
@@ -60,8 +89,7 @@ void KanbanView::renderColumn(ProjectStatus col, float colWidth) {
             std::string droppedId(static_cast<const char*>(payload->Data), payload->DataSize - 1);
             auto opt = m_store.findById(droppedId);
             if (opt && (*opt)->status != col) {
-                (*opt)->status = col;
-                m_store.update(**opt);
+                tryMoveProjectToStatus(**opt, col);
             }
         }
         ImGui::EndDragDropTarget();
@@ -128,8 +156,7 @@ void KanbanView::renderColumn(ProjectStatus col, float colWidth) {
                 std::string droppedId(static_cast<const char*>(payload->Data), payload->DataSize - 1);
                 auto opt = m_store.findById(droppedId);
                 if (opt && (*opt)->status != col) {
-                    (*opt)->status = col;
-                    m_store.update(**opt);
+                    tryMoveProjectToStatus(**opt, col);
                 }
             }
             ImGui::EndDragDropTarget();

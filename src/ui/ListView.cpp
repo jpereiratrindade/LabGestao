@@ -54,6 +54,7 @@ void ListView::render() {
     ImGui::SameLine();
     if (ImGui::Button("+ Novo Projeto")) {
         m_showCreate = true;
+        m_formError.clear();
         m_formName[0]     = '\0';
         m_formDesc[0]     = '\0';
         m_formCategory[0] = '\0';
@@ -183,6 +184,7 @@ void ListView::renderDetailPanel() {
     ImGui::Separator();
 
     if (ImGui::Button("Editar")) {
+        m_formError.clear();
         snprintf(m_formName,     sizeof(m_formName),     "%s", p.name.c_str());
         snprintf(m_formDesc,     sizeof(m_formDesc),     "%s", p.description.c_str());
         snprintf(m_formCategory, sizeof(m_formCategory), "%s", p.category.c_str());
@@ -236,6 +238,11 @@ void ListView::renderCreateModal() {
         ImGui::SetNextItemWidth(340.f);
         ImGui::InputTextWithHint("##tags", "Tags (vírgula)",  m_formTags, sizeof(m_formTags));
         ImGui::InputTextMultiline("##desc", m_formDesc, sizeof(m_formDesc), ImVec2(340.f, 100.f));
+        if (!m_formError.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.45f, 0.45f, 1.f));
+            ImGui::TextWrapped("%s", m_formError.c_str());
+            ImGui::PopStyleColor();
+        }
 
         ImGui::Separator();
         bool ok = strlen(m_formName) > 0;
@@ -249,13 +256,25 @@ void ListView::renderCreateModal() {
             p.category    = m_formCategory;
             p.tags        = splitTags(m_formTags);
             p.created_at  = nowISO();
+            std::string reason;
+            if (!m_store.canMoveToStatus(p, p.status, &reason)) {
+                m_formError = reason.empty() ? "Regra de fluxo violada." : reason;
+                if (!ok) ImGui::EndDisabled();
+                ImGui::EndPopup();
+                return;
+            }
+            if (p.status != ProjectStatus::Backlog) {
+                m_store.recordStatusChange(p, ProjectStatus::Backlog, p.status);
+            }
             m_store.add(std::move(p));
             m_showCreate = false;
+            m_formError.clear();
             ImGui::CloseCurrentPopup();
         }
         if (!ok) ImGui::EndDisabled();
         ImGui::SameLine();
         if (ImGui::Button("Cancelar", ImVec2(100.f, 0))) {
+            m_formError.clear();
             m_showCreate = false; ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
@@ -279,23 +298,41 @@ void ListView::renderEditModal() {
         ImGui::SetNextItemWidth(340.f);
         ImGui::InputTextWithHint("##tags", "Tags (vírgula)", m_formTags, sizeof(m_formTags));
         ImGui::InputTextMultiline("Descrição", m_formDesc, sizeof(m_formDesc), ImVec2(340.f, 100.f));
+        if (!m_formError.empty()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.45f, 0.45f, 1.f));
+            ImGui::TextWrapped("%s", m_formError.c_str());
+            ImGui::PopStyleColor();
+        }
 
         ImGui::Separator();
         bool ok = strlen(m_formName) > 0;
         if (!ok) ImGui::BeginDisabled();
         if (ImGui::Button("Salvar", ImVec2(100.f, 0))) {
-            p.name        = m_formName;
-            p.description = m_formDesc;
-            p.status      = static_cast<ProjectStatus>(m_formStatus);
-            p.category    = m_formCategory;
-            p.tags        = splitTags(m_formTags);
-            m_store.update(p);
+            Project updated = p;
+            updated.name        = m_formName;
+            updated.description = m_formDesc;
+            updated.status      = static_cast<ProjectStatus>(m_formStatus);
+            updated.category    = m_formCategory;
+            updated.tags        = splitTags(m_formTags);
+            if (updated.status != p.status) {
+                std::string reason;
+                if (!m_store.canMoveToStatus(updated, updated.status, &reason)) {
+                    m_formError = reason.empty() ? "Regra de fluxo violada." : reason;
+                    if (!ok) ImGui::EndDisabled();
+                    ImGui::EndPopup();
+                    return;
+                }
+                m_store.recordStatusChange(updated, p.status, updated.status);
+            }
+            m_store.update(updated);
             m_showEdit = false;
+            m_formError.clear();
             ImGui::CloseCurrentPopup();
         }
         if (!ok) ImGui::EndDisabled();
         ImGui::SameLine();
         if (ImGui::Button("Cancelar", ImVec2(100.f, 0))) {
+            m_formError.clear();
             m_showEdit = false; ImGui::CloseCurrentPopup();
         }
         ImGui::EndPopup();
