@@ -4,10 +4,12 @@
 #include <sstream>
 #include <chrono>
 #include <ctime>
+#include <cstring>
 
 namespace labgestao {
 
 static const char* kStatusLabels[] = { "Backlog", "Em Andamento", "Revisão", "Concluído", "Pausado" };
+static const char* kDaiKinds[] = { "Decision", "Action", "Impediment" };
 static const ImVec4 kStatusColors[] = {
     {0.45f, 0.35f, 0.75f, 1.f}, // Backlog   — roxo
     {0.20f, 0.60f, 0.90f, 1.f}, // Doing     — azul
@@ -181,6 +183,13 @@ void ListView::renderDetailPanel() {
     }
 
     ImGui::Spacing();
+    renderAdrSection(p);
+    ImGui::Spacing();
+    renderDaiSection(p);
+    ImGui::Spacing();
+    renderMetricsSection(p);
+
+    ImGui::Spacing();
     ImGui::Separator();
 
     if (ImGui::Button("Editar")) {
@@ -199,6 +208,118 @@ void ListView::renderDetailPanel() {
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.6f, 0.1f, 0.1f, 1.f));
     if (ImGui::Button("Excluir")) m_showDeleteConfirm = true;
     ImGui::PopStyleColor();
+}
+
+void ListView::renderAdrSection(Project& p) {
+    if (!ImGui::CollapsingHeader("ADR", ImGuiTreeNodeFlags_DefaultOpen)) return;
+
+    if (p.adrs.empty()) {
+        ImGui::TextDisabled("Sem ADR registrado.");
+    } else {
+        for (const auto& adr : p.adrs) {
+            ImGui::PushID(adr.id.c_str());
+            ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.f, 1.f), "%s", adr.title.c_str());
+            ImGui::TextDisabled("Data: %s", adr.created_at.c_str());
+            if (!adr.context.empty()) ImGui::TextWrapped("Contexto: %s", adr.context.c_str());
+            if (!adr.decision.empty()) ImGui::TextWrapped("Decisao: %s", adr.decision.c_str());
+            if (!adr.consequences.empty()) ImGui::TextWrapped("Impacto: %s", adr.consequences.c_str());
+            ImGui::Separator();
+            ImGui::PopID();
+        }
+    }
+
+    ImGui::InputTextWithHint("##adr_title", "Novo ADR: titulo", m_adrTitle, sizeof(m_adrTitle));
+    ImGui::InputTextWithHint("##adr_context", "Contexto", m_adrContext, sizeof(m_adrContext));
+    ImGui::InputTextWithHint("##adr_decision", "Decisao", m_adrDecision, sizeof(m_adrDecision));
+    ImGui::InputTextWithHint("##adr_conseq", "Impacto/consequencias", m_adrConsequences, sizeof(m_adrConsequences));
+    if (ImGui::Button("Adicionar ADR")) {
+        if (strlen(m_adrTitle) > 0) {
+            Project::AdrEntry adr;
+            adr.id = ProjectStore::generateId();
+            adr.title = m_adrTitle;
+            adr.context = m_adrContext;
+            adr.decision = m_adrDecision;
+            adr.consequences = m_adrConsequences;
+            adr.created_at = nowISO();
+            p.adrs.push_back(std::move(adr));
+            m_store.update(p);
+            m_adrTitle[0] = '\0';
+            m_adrContext[0] = '\0';
+            m_adrDecision[0] = '\0';
+            m_adrConsequences[0] = '\0';
+        }
+    }
+}
+
+void ListView::renderDaiSection(Project& p) {
+    if (!ImGui::CollapsingHeader("DAI", ImGuiTreeNodeFlags_DefaultOpen)) return;
+
+    if (p.dais.empty()) {
+        ImGui::TextDisabled("Sem itens DAI.");
+    } else {
+        for (auto& dai : p.dais) {
+            ImGui::PushID(dai.id.c_str());
+            const ImVec4 stColor = dai.closed ? ImVec4(0.35f, 0.75f, 0.35f, 1.f) : ImVec4(0.95f, 0.65f, 0.25f, 1.f);
+            ImGui::TextColored(stColor, "[%s] %s", dai.kind.c_str(), dai.title.c_str());
+            ImGui::TextDisabled("Owner: %s | Abertura: %s", dai.owner.empty() ? "-" : dai.owner.c_str(),
+                                dai.opened_at.empty() ? "-" : dai.opened_at.c_str());
+            if (!dai.due_at.empty()) ImGui::TextDisabled("Prazo: %s", dai.due_at.c_str());
+            if (!dai.notes.empty()) ImGui::TextWrapped("Notas: %s", dai.notes.c_str());
+            if (!dai.closed) {
+                if (ImGui::SmallButton("Fechar")) {
+                    dai.closed = true;
+                    dai.closed_at = nowISO();
+                    m_store.update(p);
+                }
+            } else {
+                ImGui::TextDisabled("Fechado em: %s", dai.closed_at.c_str());
+            }
+            ImGui::Separator();
+            ImGui::PopID();
+        }
+    }
+
+    ImGui::SetNextItemWidth(140.f);
+    if (ImGui::BeginCombo("Tipo", kDaiKinds[m_daiKind])) {
+        for (int i = 0; i < 3; i++) {
+            if (ImGui::Selectable(kDaiKinds[i], m_daiKind == i)) m_daiKind = i;
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::InputTextWithHint("##dai_title", "Novo item DAI", m_daiTitle, sizeof(m_daiTitle));
+    ImGui::InputTextWithHint("##dai_owner", "Responsavel", m_daiOwner, sizeof(m_daiOwner));
+    ImGui::InputTextWithHint("##dai_due", "Prazo (YYYY-MM-DD)", m_daiDueAt, sizeof(m_daiDueAt));
+    ImGui::InputTextWithHint("##dai_notes", "Notas", m_daiNotes, sizeof(m_daiNotes));
+    if (ImGui::Button("Adicionar DAI")) {
+        if (strlen(m_daiTitle) > 0) {
+            Project::DaiEntry dai;
+            dai.id = ProjectStore::generateId();
+            dai.kind = kDaiKinds[m_daiKind];
+            dai.title = m_daiTitle;
+            dai.owner = m_daiOwner;
+            dai.notes = m_daiNotes;
+            dai.opened_at = nowISO();
+            dai.due_at = m_daiDueAt;
+            p.dais.push_back(std::move(dai));
+            m_store.update(p);
+            m_daiTitle[0] = '\0';
+            m_daiOwner[0] = '\0';
+            m_daiDueAt[0] = '\0';
+            m_daiNotes[0] = '\0';
+            m_daiKind = 1;
+        }
+    }
+}
+
+void ListView::renderMetricsSection(const Project& p) {
+    if (!ImGui::CollapsingHeader("Metricas de Fluxo", ImGuiTreeNodeFlags_DefaultOpen)) return;
+    const auto m = m_store.computeProjectFlowMetrics(p);
+    ImGui::Text("Lead time: %.1f dias", m.lead_time_days);
+    ImGui::Text("Cycle time: %.1f dias", m.cycle_time_days);
+    ImGui::Text("Aging: %.1f dias", m.aging_days);
+    ImGui::Text("Transicoes: %d", m.status_transitions);
+    ImGui::Text("DAI em aberto: %d", m.open_dai_items);
+    ImGui::Text("Impedimentos: %d", m.open_impediments);
 }
 
 // ── Form helpers ──────────────────────────────────────────────────────────────
