@@ -9,7 +9,7 @@ namespace labgestao {
 
 class AppUI {
 public:
-    explicit AppUI(ProjectStore& store, const std::string& dataPath);
+    explicit AppUI(ProjectStore& store, const std::string& dataPath, const ListView::CreationDefaults& creationDefaults = {});
     void render();
     bool shouldExit() const { return m_requestExit; }
 

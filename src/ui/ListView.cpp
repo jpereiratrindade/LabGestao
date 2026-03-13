@@ -5,6 +5,8 @@
 #include <chrono>
 #include <ctime>
 #include <cstring>
+#include <cstdio>
+#include <utility>
 
 namespace labgestao {
 
@@ -27,7 +29,16 @@ static std::string nowISO() {
     return std::string(buf);
 }
 
-ListView::ListView(ProjectStore& store) : m_store(store) {}
+ListView::ListView(ProjectStore& store, CreationDefaults defaults)
+    : m_store(store)
+    , m_creationDefaults(std::move(defaults)) {
+    const std::string& initialDir = m_creationDefaults.cppRoot.empty()
+        ? m_creationDefaults.pythonRoot
+        : m_creationDefaults.cppRoot;
+    if (!initialDir.empty()) {
+        std::snprintf(m_scaffoldBaseDir, sizeof(m_scaffoldBaseDir), "%s", initialDir.c_str());
+    }
+}
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 static void badgeStatus(ProjectStatus s) {
@@ -62,6 +73,12 @@ void ListView::render() {
         m_formCategory[0] = '\0';
         m_formTags[0]     = '\0';
         m_formStatus      = 0;
+        m_createOnDisk    = true;
+        if (m_createTemplate == static_cast<int>(ProjectTemplate::Cpp) && !m_creationDefaults.cppRoot.empty()) {
+            std::snprintf(m_scaffoldBaseDir, sizeof(m_scaffoldBaseDir), "%s", m_creationDefaults.cppRoot.c_str());
+        } else if (m_createTemplate == static_cast<int>(ProjectTemplate::Python) && !m_creationDefaults.pythonRoot.empty()) {
+            std::snprintf(m_scaffoldBaseDir, sizeof(m_scaffoldBaseDir), "%s", m_creationDefaults.pythonRoot.c_str());
+        }
     }
 
     ImGui::Separator();
@@ -349,6 +366,12 @@ static std::vector<std::string> splitTags(const char* s) {
 // ── Create Modal ──────────────────────────────────────────────────────────────
 void ListView::renderCreateModal() {
     if (!m_showCreate) return;
+    static const ProjectTemplate kTemplates[] = {
+        ProjectTemplate::None,
+        ProjectTemplate::Cpp,
+        ProjectTemplate::Python
+    };
+
     ImGui::OpenPopup("Novo Projeto");
     if (ImGui::BeginPopupModal("Novo Projeto", &m_showCreate, ImGuiWindowFlags_AlwaysAutoResize)) {
         ImGui::SetNextItemWidth(340.f);
@@ -359,6 +382,35 @@ void ListView::renderCreateModal() {
         ImGui::SetNextItemWidth(340.f);
         ImGui::InputTextWithHint("##tags", "Tags (vírgula)",  m_formTags, sizeof(m_formTags));
         ImGui::InputTextMultiline("##desc", m_formDesc, sizeof(m_formDesc), ImVec2(340.f, 100.f));
+
+        const ProjectTemplate selectedTemplate = kTemplates[m_createTemplate];
+        ImGui::SetNextItemWidth(200.f);
+        if (ImGui::BeginCombo("Template", projectTemplateLabel(selectedTemplate).c_str())) {
+            for (int i = 0; i < 3; i++) {
+                const bool selected = (m_createTemplate == i);
+                if (ImGui::Selectable(projectTemplateLabel(kTemplates[i]).c_str(), selected)) {
+                    m_createTemplate = i;
+                    if (kTemplates[i] == ProjectTemplate::Cpp && !m_creationDefaults.cppRoot.empty()) {
+                        std::snprintf(m_scaffoldBaseDir, sizeof(m_scaffoldBaseDir), "%s", m_creationDefaults.cppRoot.c_str());
+                    }
+                    if (kTemplates[i] == ProjectTemplate::Python && !m_creationDefaults.pythonRoot.empty()) {
+                        std::snprintf(m_scaffoldBaseDir, sizeof(m_scaffoldBaseDir), "%s", m_creationDefaults.pythonRoot.c_str());
+                    }
+                }
+            }
+            ImGui::EndCombo();
+        }
+
+        if (selectedTemplate == ProjectTemplate::Cpp || selectedTemplate == ProjectTemplate::Python) {
+            ImGui::Checkbox("Criar estrutura base no disco", &m_createOnDisk);
+            if (m_createOnDisk) {
+                ImGui::SetNextItemWidth(340.f);
+                ImGui::InputTextWithHint("##base_dir", "Diretorio base", m_scaffoldBaseDir, sizeof(m_scaffoldBaseDir));
+            }
+        } else {
+            m_createOnDisk = false;
+        }
+
         if (!m_formError.empty()) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.45f, 0.45f, 1.f));
             ImGui::TextWrapped("%s", m_formError.c_str());
@@ -377,6 +429,31 @@ void ListView::renderCreateModal() {
             p.category    = m_formCategory;
             p.tags        = splitTags(m_formTags);
             p.created_at  = nowISO();
+
+            if (selectedTemplate == ProjectTemplate::Cpp) {
+                if (p.category.empty()) p.category = "C++";
+                if (p.tags.empty()) p.tags = {"C++", "Template"};
+            } else if (selectedTemplate == ProjectTemplate::Python) {
+                if (p.category.empty()) p.category = "Python";
+                if (p.tags.empty()) p.tags = {"Python", "Template"};
+            }
+
+            if (m_createOnDisk && selectedTemplate != ProjectTemplate::None) {
+                ScaffoldRequest req;
+                req.templ = selectedTemplate;
+                req.projectName = p.name;
+                req.baseDirectory = m_scaffoldBaseDir;
+                const auto scaffold = createProjectScaffold(req);
+                if (!scaffold.ok) {
+                    m_formError = "Falha no scaffold: " + scaffold.message;
+                    if (!ok) ImGui::EndDisabled();
+                    ImGui::EndPopup();
+                    return;
+                }
+                p.source_path = scaffold.projectDir;
+                p.source_root = req.baseDirectory;
+            }
+
             std::string reason;
             if (!m_store.canMoveToStatus(p, p.status, &reason)) {
                 m_formError = reason.empty() ? "Regra de fluxo violada." : reason;

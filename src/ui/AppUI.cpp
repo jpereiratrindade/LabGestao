@@ -22,10 +22,10 @@ std::string todayISO() {
 }
 }
 
-AppUI::AppUI(ProjectStore& store, const std::string& dataPath)
+AppUI::AppUI(ProjectStore& store, const std::string& dataPath, const ListView::CreationDefaults& creationDefaults)
     : m_store(store)
     , m_dataPath(dataPath)
-    , m_list(store)
+    , m_list(store, creationDefaults)
     , m_kanban(store)
     , m_graph(store)
 {}

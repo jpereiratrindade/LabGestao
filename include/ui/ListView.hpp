@@ -1,11 +1,17 @@
 #pragma once
 #include "domain/ProjectStore.hpp"
+#include "domain/ProjectScaffold.hpp"
 
 namespace labgestao {
 
 class ListView {
 public:
-    explicit ListView(ProjectStore& store);
+    struct CreationDefaults {
+        std::string cppRoot;
+        std::string pythonRoot;
+    };
+
+    explicit ListView(ProjectStore& store, CreationDefaults defaults = {});
     void render();
 
 private:
@@ -35,6 +41,10 @@ private:
     char  m_formTags[512]{};
     int   m_formStatus{0};
     std::string m_formError;
+    int   m_createTemplate{static_cast<int>(ProjectTemplate::Cpp)};
+    bool  m_createOnDisk{true};
+    char  m_scaffoldBaseDir[512]{};
+    CreationDefaults m_creationDefaults;
 
     // ADR form
     char  m_adrTitle[256]{};

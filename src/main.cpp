@@ -312,7 +312,17 @@ int main(int /*argc*/, char** /*argv*/) {
 
     SyncAutoDiscoveredProjects(store, monitoredRoots);
 
-    labgestao::AppUI app(store, dataPath);
+    labgestao::ListView::CreationDefaults creationDefaults;
+    for (const auto& root : monitoredRoots) {
+        if (creationDefaults.cppRoot.empty() && root.category == "C++") {
+            creationDefaults.cppRoot = root.path;
+        }
+        if (creationDefaults.pythonRoot.empty() && root.category == "Python") {
+            creationDefaults.pythonRoot = root.path;
+        }
+    }
+
+    labgestao::AppUI app(store, dataPath, creationDefaults);
     auto nextFolderSync = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 
     bool running = true;
