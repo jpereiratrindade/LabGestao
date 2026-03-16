@@ -1,6 +1,6 @@
 # LabGestao
 
-Build nativo para Fedora Silverblue, sem `nix develop`.
+Build nativo para Fedora Silverblue, com opcao de ambiente via Nix.
 
 ## Fluxo recomendado no Silverblue
 
@@ -23,6 +23,17 @@ Se voce quiser instalar direto no host imutavel:
 sudo rpm-ostree install cmake gcc-c++ pkgconf-pkg-config SDL2-devel mesa-libGL-devel curl ninja-build
 systemctl reboot
 ./build.sh
+```
+
+## Opcional: ambiente com Nix (flake)
+
+Se preferir reproducibilidade com Nix:
+
+```bash
+nix develop
+./build.sh
+cd build-ninja
+./LabGestao
 ```
 
 ## O que o `build.sh` faz
