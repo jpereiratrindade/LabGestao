@@ -141,15 +141,36 @@ void ListView::renderTable() {
         ImGui::TableSetupColumn("Criado em", 0,                                 1.0f);
         ImGui::TableHeadersRow();
 
+        std::vector<Project*> rows;
+        rows.reserve(m_store.getAll().size());
         for (auto& p : m_store.getAll()) {
-            // Filter
             if (m_filterStatus >= 0 && static_cast<int>(p.status) != m_filterStatus)
                 continue;
             if (!srch.empty()) {
                 std::string low = p.name; std::transform(low.begin(), low.end(), low.begin(), ::tolower);
                 if (low.find(srch) == std::string::npos) continue;
             }
+            rows.push_back(&p);
+        }
 
+        if (ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs()) {
+            if (sortSpecs->SpecsDirty && sortSpecs->SpecsCount > 0) {
+                const ImGuiTableColumnSortSpecs spec = sortSpecs->Specs[0];
+                std::stable_sort(rows.begin(), rows.end(), [&](const Project* a, const Project* b) {
+                    int cmp = 0;
+                    if (spec.ColumnIndex == 0) cmp = a->name.compare(b->name);
+                    if (spec.ColumnIndex == 2) cmp = a->category.compare(b->category);
+                    if (spec.ColumnIndex == 4) cmp = a->created_at.compare(b->created_at);
+                    if (cmp == 0) cmp = a->name.compare(b->name);
+                    if (spec.SortDirection == ImGuiSortDirection_Descending) cmp = -cmp;
+                    return cmp < 0;
+                });
+                sortSpecs->SpecsDirty = false;
+            }
+        }
+
+        for (Project* row : rows) {
+            Project& p = *row;
             ImGui::TableNextRow();
             ImGui::TableSetColumnIndex(0);
 

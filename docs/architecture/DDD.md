@@ -44,6 +44,16 @@ Responsavel por indicadores de operacao (WIP, throughput, lead/cycle time).
   - metricas precisam ser calculadas por janela de tempo (7/14/30 dias)
   - exportacao deve manter formato estavel para analise externa
 
+### 5) Workspace e Descoberta Automatica
+Responsavel por configurar raiz monitorada e persistencia ativa.
+
+- Entidade: `WorkspaceConfig`
+- Regras:
+  - `workspace_root` define a raiz funcional do usuario
+  - `data_dir` deve apontar para `<workspace_root>/data` quando workspace esta definido
+  - roots monitoradas devem vir de configuracao, nunca hardcoded
+  - limpar projetos remove somente estado do LabGestao (arquivo JSON), sem apagar codigo-fonte
+
 ## Agregados e Fronteiras
 
 - Agregado principal: `Project`
@@ -65,10 +75,27 @@ Responsavel por indicadores de operacao (WIP, throughput, lead/cycle time).
 - Cycle Time
 - Scaffold
 - Projeto Auto-descoberto
+- Workspace Root
+- Data Dir Ativo
+- Reclassificacao Automatizada
 
 ## Aplicacao
 A camada de UI (`src/ui`) orquestra casos de uso e aciona regras de dominio (`src/domain`).
-Persistencia atual via JSON em `data/projects.json`.
+A inicializacao (`src/app/AppRuntime.cpp`) sincroniza auto-descoberta e aplica reclassificacao automatica do Kanban.
+Persistencia atual via JSON em `<data_dir>/projects.json`, com configuracao em `~/.config/labgestao/settings.json`.
+
+## Politica de Reclassificacao (Kanban Auto)
+Aplicada para projetos auto-descobertos:
+
+1. `Impediment` DAI aberto -> `Paused`
+2. DAI aberto (sem impedimento) -> `Doing`
+3. Sem DAI aberto: usa ultimo commit Git
+4. `<= 7 dias` -> `Doing`
+5. `<= 30 dias` -> `Review`
+6. `<= 120 dias` -> `Paused`
+7. `> 120 dias` -> `Backlog`
+
+Transicoes validas devem passar por `canMoveToStatus` e ser registradas em `status_history`.
 
 ## Proximos passos DDD
 1. Extrair casos de uso explicitos (`Application Services`) para reduzir logica em UI.

@@ -89,13 +89,20 @@ cmake --build build-ninja --parallel
 ctest --test-dir build-ninja --output-on-failure
 ```
 
-## Pastas monitoradas (configuravel)
+## Workspace e pastas monitoradas (configuravel)
 
 As roots monitoradas nao ficam mais hardcoded no codigo.
-O app usa `data/settings.json` e cria um arquivo default na primeira execucao.
+O app usa `~/.config/labgestao/settings.json` e cria um arquivo default na primeira execucao.
+Se existir configuracao legada em `./data/settings.json`, o app migra automaticamente.
 Por padrao, `monitored_roots` inicia vazio (nenhuma auto-descoberta).
 
-Quando `data_dir` nao e informado, o LabGestao cria a pasta `data` na raiz comum das roots monitoradas.
+Voce pode definir workspace pelo menu `Tools -> Selecionar Workspace...`.
+Nesse fluxo, o app define:
+- `workspace_root` = pasta escolhida
+- `data_dir` = `<workspace_root>/data`
+- `monitored_roots` com a propria raiz do workspace
+
+Quando `workspace_root` e `data_dir` nao sao informados, o LabGestao cria a pasta `data` na raiz comum das roots monitoradas.
 Exemplos:
 - uma root `/home/user/dev/cpp` => `/home/user/dev/cpp/data`
 - duas roots `/home/user/dev/cpp` e `/home/user/dev/python` => `/home/user/dev/data`
@@ -105,6 +112,7 @@ Exemplo:
 
 ```json
 {
+  "workspace_root": "/home/seu-usuario/dev/labeco",
   "data_dir": "/home/seu-usuario/dev/data",
   "monitored_roots": [
     {
@@ -123,8 +131,43 @@ Exemplo:
 }
 ```
 
+## Tools (menu)
+
+Opcoes principais:
+
+- `Selecionar Workspace...`: define workspace, atualiza `settings.json`, cria `<workspace>/data` e passa a usar esse `data_dir`.
+- `Reclassificar Kanban (Auto)`: recalcula status de projetos auto-descobertos com base em DAI e atividade Git.
+- `Abrir pasta de dados`: abre o diretorio ativo de dados no sistema.
+- `Abrir lista de projetos`: abre o arquivo `projects.json`.
+- `Criar Projeto`: atalho para abrir criacao (`Ctrl+N`).
+- `Limpar Projetos`: limpa apenas o arquivo de dados do LabGestao (nao remove pastas de projetos no disco).
+
+O topo da UI mostra `Data ativo: ...` para indicar exatamente qual pasta esta sendo usada.
+
+## Reclassificacao automatica de Kanban
+
+A classificacao automatica (manual pelo menu e aplicada no startup) segue esta prioridade para projetos auto-descobertos:
+
+1. Se houver DAI aberto do tipo `Impediment` -> `Pausado`
+2. Senao, se houver DAI aberto -> `Em Andamento`
+3. Senao, usa data do ultimo commit Git:
+- `<= 7 dias` -> `Em Andamento`
+- `<= 30 dias` -> `Revisao`
+- `<= 120 dias` -> `Pausado`
+- `> 120 dias` -> `Backlog`
+
+Mudancas validas registram historico de transicoes no projeto.
+
+## Tabela de projetos
+
+Na aba `Projetos`, o clique no cabecalho agora ordena por:
+- `Nome`
+- `Categoria`
+- `Criado em`
+
 Se voce quiser zerar o estado local (sem projetos antigos), remova:
 
 ```bash
-rm -f data/projects.json data/settings.json
+rm -f ~/.config/labgestao/settings.json
+rm -f /caminho/do/workspace/data/projects.json
 ```

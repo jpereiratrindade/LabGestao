@@ -81,10 +81,3 @@ add_test(
     NAME domain_tests
     COMMAND LabGestaoDomainTests
 )
-
-# Copy data dir to build directory after build (for run-in-place)
-add_custom_command(TARGET LabGestao POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E make_directory
-        $<TARGET_FILE_DIR:LabGestao>/data
-    COMMENT "Ensuring data/ directory exists next to binary"
-)

@@ -7,7 +7,8 @@
 Precisamos de persistencia simples, transparente e sem banco dedicado para uso individual/local.
 
 ## Decisao
-Persistir dados de dominio em arquivo JSON (`data/projects.json`) usando `nlohmann/json` (vendored).
+Persistir dados de dominio em arquivo JSON (`<data_dir>/projects.json`) usando `nlohmann/json` (vendored).
+Persistir configuracao operacional em `~/.config/labgestao/settings.json`.
 
 ## Consequencias
 - Positivas:

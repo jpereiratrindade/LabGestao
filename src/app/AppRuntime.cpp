@@ -12,10 +12,12 @@
 #include <SDL2/SDL_opengl.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <ctime>
+#include <cstdint>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -38,6 +40,7 @@ struct MonitoredRoot {
 };
 
 struct AppSettings {
+    std::string workspaceRoot;
     std::string dataDir;
     std::vector<MonitoredRoot> monitoredRoots;
 };
@@ -138,6 +141,122 @@ std::string todayIsoDate() {
     return buf;
 }
 
+int daysSinceEpoch(const std::string& isoDate) {
+    if (isoDate.size() < 10) return -1;
+    std::tm tm_buf {};
+    std::istringstream ss(isoDate.substr(0, 10));
+    ss >> std::get_time(&tm_buf, "%Y-%m-%d");
+    if (ss.fail()) return -1;
+    tm_buf.tm_hour = 12;
+    tm_buf.tm_isdst = -1;
+    std::time_t tt = std::mktime(&tm_buf);
+    if (tt < 0) return -1;
+    return static_cast<int>(tt / 86400);
+}
+
+std::string shellEscapeSingleQuoted(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 8);
+    out.push_back('\'');
+    for (char c : s) {
+        if (c == '\'') out += "'\\''";
+        else out.push_back(c);
+    }
+    out.push_back('\'');
+    return out;
+}
+
+std::string runAndCaptureTrimmed(const std::string& cmd) {
+    std::array<char, 512> buffer{};
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) return {};
+
+    std::string out;
+    while (fgets(buffer.data(), static_cast<int>(buffer.size()), pipe) != nullptr) {
+        out += buffer.data();
+    }
+
+    const int rc = pclose(pipe);
+    if (rc != 0) return {};
+
+    while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
+    return out;
+}
+
+std::string getLastGitCommitDate(const std::string& projectPath) {
+    if (projectPath.empty()) return {};
+    const std::string cmd = "git -C " + shellEscapeSingleQuoted(projectPath) + " log -1 --format=%cs 2>/dev/null";
+    const std::string out = runAndCaptureTrimmed(cmd);
+    if (out.size() < 10) return {};
+    return out.substr(0, 10);
+}
+
+void reclassifyKanbanAuto(labgestao::ProjectStore& store) {
+    const std::string today = todayIsoDate();
+
+    auto isAutoProject = [](const labgestao::Project& p) {
+        if (p.auto_discovered) return true;
+        for (const auto& tag : p.tags) {
+            if (tag == "Auto") return true;
+        }
+        return false;
+    };
+
+    std::vector<std::string> ids;
+    ids.reserve(store.getAll().size());
+    for (const auto& p : store.getAll()) {
+        if (isAutoProject(p)) ids.push_back(p.id);
+    }
+
+    for (const auto& id : ids) {
+        auto opt = store.findById(id);
+        if (!opt || !(*opt)) continue;
+        labgestao::Project* current = *opt;
+        if (!current) continue;
+
+        int openDai = 0;
+        int openImpediments = 0;
+        for (const auto& dai : current->dais) {
+            if (dai.closed) continue;
+            openDai++;
+            if (dai.kind == "Impediment") openImpediments++;
+        }
+
+        labgestao::ProjectStatus target = current->status;
+        bool hasSignal = false;
+        if (openImpediments > 0) {
+            target = labgestao::ProjectStatus::Paused;
+            hasSignal = true;
+        } else if (openDai > 0) {
+            target = labgestao::ProjectStatus::Doing;
+            hasSignal = true;
+        } else {
+            const std::string lastCommit = getLastGitCommitDate(current->source_path);
+            if (!lastCommit.empty()) {
+                const int age = daysSinceEpoch(today) - daysSinceEpoch(lastCommit);
+                if (age >= 0) {
+                    hasSignal = true;
+                    if (age <= 7) target = labgestao::ProjectStatus::Doing;
+                    else if (age <= 30) target = labgestao::ProjectStatus::Review;
+                    else if (age <= 120) target = labgestao::ProjectStatus::Paused;
+                    else target = labgestao::ProjectStatus::Backlog;
+                }
+            }
+        }
+
+        if (!hasSignal || target == current->status) continue;
+
+        std::string reason;
+        if (!store.canMoveToStatus(*current, target, &reason)) continue;
+
+        labgestao::Project updated = *current;
+        const labgestao::ProjectStatus from = updated.status;
+        updated.status = target;
+        store.recordStatusChange(updated, from, updated.status, today);
+        store.update(updated);
+    }
+}
+
 std::string canonicalPathOrRaw(const fs::path& p) {
     std::error_code ec;
     fs::path canon = fs::weakly_canonical(p, ec);
@@ -150,10 +269,21 @@ std::string canonicalPathOrRaw(const fs::path& p) {
 }
 
 std::string makeAutoProjectId(const std::string& canonicalPath) {
-    const std::size_t h = std::hash<std::string>{}(canonicalPath);
+    // Stable FNV-1a 64-bit hash (deterministic across runs/compilers).
+    std::uint64_t h = 1469598103934665603ull;
+    for (unsigned char c : canonicalPath) {
+        h ^= static_cast<std::uint64_t>(c);
+        h *= 1099511628211ull;
+    }
     std::ostringstream oss;
     oss << "auto-" << std::hex << h;
     return oss.str();
+}
+
+bool samePathBestEffort(const std::string& a, const std::string& b) {
+    if (a.empty() || b.empty()) return false;
+    if (a == b) return true;
+    return canonicalPathOrRaw(fs::path(a)) == canonicalPathOrRaw(fs::path(b));
 }
 
 bool looksLikeProjectFolder(const fs::path& dir, const MonitoredRoot& root) {
@@ -207,23 +337,33 @@ std::vector<labgestao::Project> scanProjectsFromRoots(const std::vector<Monitore
 
 void syncAutoDiscoveredProjects(labgestao::ProjectStore& store, const std::vector<MonitoredRoot>& roots) {
     const auto scanned = scanProjectsFromRoots(roots);
-
-    std::unordered_map<std::string, labgestao::Project> byId;
-    byId.reserve(scanned.size());
-    for (const auto& p : scanned) byId.emplace(p.id, p);
-
     std::unordered_set<std::string> currentAutoIds;
-    currentAutoIds.reserve(byId.size());
-    for (const auto& [id, _] : byId) currentAutoIds.insert(id);
+    currentAutoIds.reserve(scanned.size());
 
-    for (const auto& [id, detected] : byId) {
-        auto opt = store.findById(id);
-        if (!opt) {
+    for (const auto& detected : scanned) {
+        labgestao::Project* target = nullptr;
+
+        if (auto opt = store.findById(detected.id); opt) {
+            target = *opt;
+        }
+
+        // Keep status/history if ID changes but source path is the same project.
+        if (!target && !detected.source_path.empty()) {
+            for (auto& existing : store.getAll()) {
+                if (existing.auto_discovered && samePathBestEffort(existing.source_path, detected.source_path)) {
+                    target = &existing;
+                    break;
+                }
+            }
+        }
+
+        if (!target) {
             store.add(detected);
+            currentAutoIds.insert(detected.id);
             continue;
         }
 
-        labgestao::Project updated = **opt;
+        labgestao::Project updated = *target;
         bool changed = false;
 
         if (!updated.auto_discovered) { updated.auto_discovered = true; changed = true; }
@@ -236,6 +376,7 @@ void syncAutoDiscoveredProjects(labgestao::ProjectStore& store, const std::vecto
         if (updated.description.empty()) { updated.description = detected.description; changed = true; }
 
         if (changed) store.update(updated);
+        currentAutoIds.insert(updated.id);
     }
 
     std::vector<std::string> staleAutoProjects;
@@ -250,6 +391,10 @@ std::vector<MonitoredRoot> defaultMonitoredRoots() {
 }
 
 std::string settingsPath() {
+    const char* home = std::getenv("HOME");
+    if (home && *home) {
+        return (fs::path(home) / ".config" / "labgestao" / "settings.json").string();
+    }
     return "data/settings.json";
 }
 
@@ -310,6 +455,7 @@ bool monitoredRootFromJson(const json& v, MonitoredRoot* out) {
 
 bool saveSettings(const AppSettings& settings, const std::string& path) {
     json j;
+    j["workspace_root"] = settings.workspaceRoot;
     j["data_dir"] = settings.dataDir;
     j["monitored_roots"] = json::array();
     for (const auto& root : settings.monitoredRoots) {
@@ -324,10 +470,25 @@ bool saveSettings(const AppSettings& settings, const std::string& path) {
 
 AppSettings loadSettingsOrDefault(const std::string& path) {
     AppSettings settings;
+    settings.workspaceRoot.clear();
     settings.dataDir.clear();
     settings.monitoredRoots = defaultMonitoredRoots();
 
     std::ifstream in(path);
+    if (!in.is_open()) {
+        // Legacy compatibility: migrate old settings from local data/settings.json.
+        std::ifstream legacy("data/settings.json");
+        if (legacy.is_open()) {
+            std::ostringstream oss;
+            oss << legacy.rdbuf();
+            std::ofstream migrated(path);
+            if (migrated.is_open()) {
+                migrated << oss.str();
+            }
+            in.close();
+            in.open(path);
+        }
+    }
     if (!in.is_open()) {
         saveSettings(settings, path);
         return settings;
@@ -339,6 +500,7 @@ AppSettings loadSettingsOrDefault(const std::string& path) {
             std::fprintf(stderr, "Settings warning: invalid settings.json format, using defaults.\n");
             return settings;
         }
+        settings.workspaceRoot = parsed.value("workspace_root", "");
         settings.dataDir = parsed.value("data_dir", "");
 
         std::vector<MonitoredRoot> loaded;
@@ -411,10 +573,14 @@ int runApp() {
     ImGui_ImplOpenGL3_Init("#version 330");
     loadFonts(io);
 
-    fs::create_directories("data");
+    fs::create_directories(fs::path(appSettingsPath).parent_path());
 
     AppSettings settings = loadSettingsOrDefault(appSettingsPath);
     const std::vector<MonitoredRoot> monitoredRoots = settings.monitoredRoots;
+    if (!settings.workspaceRoot.empty()) {
+        settings.dataDir = (fs::path(settings.workspaceRoot) / "data").string();
+        saveSettings(settings, appSettingsPath);
+    }
     if (settings.dataDir.empty()) {
         settings.dataDir = inferDataDirFromRoots(monitoredRoots).string();
         saveSettings(settings, appSettingsPath);
@@ -433,9 +599,10 @@ int runApp() {
 
     if (!monitoredRoots.empty()) {
         syncAutoDiscoveredProjects(store, monitoredRoots);
+        reclassifyKanbanAuto(store);
     }
 
-    AppUI app(store, dataPath, makeCreationDefaults(monitoredRoots));
+    AppUI app(store, dataPath, appSettingsPath, settings.workspaceRoot, makeCreationDefaults(monitoredRoots));
     auto nextFolderSync = std::chrono::steady_clock::now() + std::chrono::seconds(5);
 
     bool running = true;
