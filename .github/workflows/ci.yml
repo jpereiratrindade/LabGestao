@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - master
+      - main
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake \
+            ninja-build \
+            g++ \
+            libsdl2-dev \
+            libgl1-mesa-dev
+
+      - name: Configure
+        run: cmake -S . -B build-ci -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build-ci --parallel
+
+      - name: Test (if configured)
+        run: |
+          if [ -f build-ci/CTestTestfile.cmake ]; then
+            ctest --test-dir build-ci --output-on-failure
+          else
+            echo "No tests configured yet."
+          fi

@@ -53,3 +53,27 @@ Estrutura minima gerada:
 
 - `C++`: `CMakeLists.txt`, `README.md`, `.gitignore`, `src/main.cpp`, `include/`, `tests/`
 - `Python`: `pyproject.toml`, `README.md`, `.gitignore`, `src/<pacote>/`, `tests/test_smoke.py`
+
+## Governanca tecnica
+
+- DDD: `docs/architecture/DDD.md`
+- ADRs: `docs/adr/README.md`
+- DAI log: `docs/dai/DAI.md`
+
+## CI
+
+Pipeline de CI via GitHub Actions em `.github/workflows/ci.yml`:
+
+- dispara em `push` para `master/main` e em `pull_request`
+- valida configuracao CMake + build com Ninja em Ubuntu
+- executa `ctest` automaticamente quando houver testes configurados
+
+## Testes
+
+Executar localmente:
+
+```bash
+cmake -S . -B build-ninja -G Ninja
+cmake --build build-ninja --parallel
+ctest --test-dir build-ninja --output-on-failure
+```

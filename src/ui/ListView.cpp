@@ -35,6 +35,8 @@ static std::string nowISO() {
 
 static std::string shellEscapeSingleQuoted(const std::string& s);
 static bool launchDetachedShellCommand(const std::string& cmd);
+static bool isCommandAvailable(const char* cmd);
+static bool isFlatpakAppInstalled(const char* appId);
 static std::string slugifyProjectName(const std::string& name);
 static std::string resolveProjectPathForOpen(const Project& p, const ListView::CreationDefaults& defaults);
 
@@ -275,8 +277,42 @@ void ListView::renderOpenInEditorSection(const Project& p) {
     if (ImGui::Button("Abrir Projeto")) {
         const std::string escapedPath = shellEscapeSingleQuoted(path);
         std::string cmd;
-        if (m_editorChoice == 0) cmd = "codium " + escapedPath;
-        if (m_editorChoice == 1) cmd = "code " + escapedPath;
+        std::string effectiveLabel = kEditorLabels[m_editorChoice];
+
+        if (m_editorChoice == 0) {
+            if (isCommandAvailable("codium")) {
+                cmd = "codium " + escapedPath;
+            } else if (isFlatpakAppInstalled("com.vscodium.codium")) {
+                cmd = "flatpak run com.vscodium.codium " + escapedPath;
+                effectiveLabel = "VSCodium (flatpak)";
+            } else if (isCommandAvailable("code")) {
+                cmd = "code " + escapedPath;
+                effectiveLabel = "VS Code (fallback)";
+            } else if (isFlatpakAppInstalled("com.visualstudio.code")) {
+                cmd = "flatpak run com.visualstudio.code " + escapedPath;
+                effectiveLabel = "VS Code (flatpak fallback)";
+            } else {
+                cmd = "xdg-open " + escapedPath;
+                effectiveLabel = "Sistema (fallback)";
+            }
+        }
+        if (m_editorChoice == 1) {
+            if (isCommandAvailable("code")) {
+                cmd = "code " + escapedPath;
+            } else if (isFlatpakAppInstalled("com.visualstudio.code")) {
+                cmd = "flatpak run com.visualstudio.code " + escapedPath;
+                effectiveLabel = "VS Code (flatpak)";
+            } else if (isCommandAvailable("codium")) {
+                cmd = "codium " + escapedPath;
+                effectiveLabel = "VSCodium (fallback)";
+            } else if (isFlatpakAppInstalled("com.vscodium.codium")) {
+                cmd = "flatpak run com.vscodium.codium " + escapedPath;
+                effectiveLabel = "VSCodium (flatpak fallback)";
+            } else {
+                cmd = "xdg-open " + escapedPath;
+                effectiveLabel = "Sistema (fallback)";
+            }
+        }
         if (m_editorChoice == 2) cmd = "xdg-open " + escapedPath;
         if (m_editorChoice == 3) {
             std::string custom = m_customEditorCmd;
@@ -296,9 +332,9 @@ void ListView::renderOpenInEditorSection(const Project& p) {
         }
 
         if (launchDetachedShellCommand(cmd)) {
-            m_editorMessage = "Comando enviado: " + cmd;
+            m_editorMessage = "Abrindo com " + effectiveLabel + ": " + cmd;
         } else {
-            m_editorMessage = "Falha ao executar comando do editor.";
+            m_editorMessage = "Falha ao executar comando do editor. Verifique se o comando existe no PATH.";
         }
     }
     if (!hasPath) ImGui::EndDisabled();
@@ -455,6 +491,19 @@ static std::string shellEscapeSingleQuoted(const std::string& s) {
 static bool launchDetachedShellCommand(const std::string& cmd) {
     const std::string wrapped = cmd + " >/dev/null 2>&1 &";
     return std::system(wrapped.c_str()) == 0;
+}
+
+static bool isCommandAvailable(const char* cmd) {
+    if (!cmd || !*cmd) return false;
+    const std::string probe = std::string("command -v ") + cmd + " >/dev/null 2>&1";
+    return std::system(probe.c_str()) == 0;
+}
+
+static bool isFlatpakAppInstalled(const char* appId) {
+    if (!appId || !*appId) return false;
+    if (!isCommandAvailable("flatpak")) return false;
+    const std::string probe = std::string("flatpak info ") + appId + " >/dev/null 2>&1";
+    return std::system(probe.c_str()) == 0;
 }
 
 static std::string slugifyProjectName(const std::string& name) {
