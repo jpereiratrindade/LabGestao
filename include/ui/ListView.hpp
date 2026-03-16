@@ -13,8 +13,10 @@ public:
 
     explicit ListView(ProjectStore& store, CreationDefaults defaults = {});
     void render();
+    void requestCreateProject();
 
 private:
+    void resetCreateForm();
     void renderTable();
     void renderDetailPanel();
     void renderOpenInEditorSection(const Project& p);

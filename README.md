@@ -88,3 +88,43 @@ cmake -S . -B build-ninja -G Ninja
 cmake --build build-ninja --parallel
 ctest --test-dir build-ninja --output-on-failure
 ```
+
+## Pastas monitoradas (configuravel)
+
+As roots monitoradas nao ficam mais hardcoded no codigo.
+O app usa `data/settings.json` e cria um arquivo default na primeira execucao.
+Por padrao, `monitored_roots` inicia vazio (nenhuma auto-descoberta).
+
+Quando `data_dir` nao e informado, o LabGestao cria a pasta `data` na raiz comum das roots monitoradas.
+Exemplos:
+- uma root `/home/user/dev/cpp` => `/home/user/dev/cpp/data`
+- duas roots `/home/user/dev/cpp` e `/home/user/dev/python` => `/home/user/dev/data`
+- sem roots validas => fallback para `./data`
+
+Exemplo:
+
+```json
+{
+  "data_dir": "/home/seu-usuario/dev/data",
+  "monitored_roots": [
+    {
+      "path": "/home/seu-usuario/dev/cpp",
+      "category": "C++",
+      "tags": ["Auto", "C++"],
+      "marker_files": ["CMakeLists.txt", "meson.build", "Makefile", "compile_commands.json"]
+    },
+    {
+      "path": "/home/seu-usuario/dev/python",
+      "category": "Python",
+      "tags": ["Auto", "Python"],
+      "marker_files": ["pyproject.toml", "requirements.txt", "setup.py", "Pipfile"]
+    }
+  ]
+}
+```
+
+Se voce quiser zerar o estado local (sem projetos antigos), remova:
+
+```bash
+rm -f data/projects.json data/settings.json
+```

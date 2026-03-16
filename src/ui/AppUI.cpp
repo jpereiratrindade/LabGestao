@@ -1,6 +1,7 @@
 #include "ui/AppUI.hpp"
 #include "imgui.h"
 #include <array>
+#include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -19,6 +20,35 @@ std::string todayISO() {
     char buf[11] = {};
     std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tm_buf);
     return std::string(buf);
+}
+
+std::string shellEscapeSingleQuoted(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 8);
+    out.push_back('\'');
+    for (char c : s) {
+        if (c == '\'') out += "'\\''";
+        else out.push_back(c);
+    }
+    out.push_back('\'');
+    return out;
+}
+
+bool launchDetachedShellCommand(const std::string& cmd) {
+    const std::string wrapped = cmd + " >/dev/null 2>&1 &";
+    return std::system(wrapped.c_str()) == 0;
+}
+
+bool openPathInSystem(const std::string& path) {
+    const std::string escaped = shellEscapeSingleQuoted(path);
+#if defined(_WIN32)
+    const std::string cmd = "start \"\" " + escaped;
+#elif defined(__APPLE__)
+    const std::string cmd = "open " + escaped;
+#else
+    const std::string cmd = "xdg-open " + escaped;
+#endif
+    return launchDetachedShellCommand(cmd);
 }
 }
 
@@ -88,6 +118,12 @@ void AppUI::applyTheme() {
 
 void AppUI::render() {
     if (!m_themeApplied) { applyTheme(); m_themeApplied = true; }
+    ImGuiIO& io = ImGui::GetIO();
+
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_N, false)) {
+        m_focusProjectsTab = true;
+        m_requestCreateFromTools = true;
+    }
 
     // Main Menu Bar
     if (ImGui::BeginMainMenuBar()) {
@@ -97,11 +133,44 @@ void AppUI::render() {
             }
             ImGui::EndMenu();
         }
+        if (ImGui::BeginMenu("Tools")) {
+            const fs::path dataDir = fs::path(m_dataPath).parent_path().empty() ? fs::path("data") : fs::path(m_dataPath).parent_path();
+            if (ImGui::MenuItem("Abrir pasta de dados")) {
+                std::error_code ec;
+                fs::create_directories(dataDir, ec);
+                if (openPathInSystem(dataDir.string())) {
+                    m_toolsMessage = "Abrindo pasta de dados.";
+                } else {
+                    m_toolsMessage = "Falha ao abrir pasta de dados.";
+                }
+            }
+            if (ImGui::MenuItem("Abrir lista de projetos")) {
+                std::error_code ec;
+                fs::create_directories(dataDir, ec);
+                if (!fs::exists(m_dataPath)) {
+                    std::ofstream out(m_dataPath);
+                }
+                if (openPathInSystem(m_dataPath)) {
+                    m_toolsMessage = "Abrindo lista de projetos.";
+                } else {
+                    m_toolsMessage = "Falha ao abrir lista de projetos.";
+                }
+            }
+            ImGui::Separator();
+            if (ImGui::MenuItem("Criar Projeto", "Ctrl+N")) {
+                m_focusProjectsTab = true;
+                m_requestCreateFromTools = true;
+                m_toolsMessage.clear();
+            }
+            if (ImGui::MenuItem("Limpar Projetos")) {
+                m_showClearProjectsConfirm = true;
+            }
+            ImGui::EndMenu();
+        }
         ImGui::EndMainMenuBar();
     }
 
     // Full-viewport window
-    ImGuiIO& io = ImGui::GetIO();
     float menuBarHeight = ImGui::GetFrameHeight();
     ImGui::SetNextWindowPos(ImVec2(0, menuBarHeight));
     ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, io.DisplaySize.y - menuBarHeight));
@@ -118,12 +187,22 @@ void AppUI::render() {
     ImGui::TextDisabled("- Gestao de Projetos");
     ImGui::SameLine(ImGui::GetContentRegionAvail().x - 160.f);
     ImGui::TextDisabled("%zu projeto(s)", m_store.getAll().size());
+    if (!m_toolsMessage.empty()) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("| %s", m_toolsMessage.c_str());
+    }
 
     ImGui::Separator();
 
     // Tab bar
     if (ImGui::BeginTabBar("##MainTabs", ImGuiTabBarFlags_None)) {
-        if (ImGui::BeginTabItem("  [Projetos]  ")) {
+        ImGuiTabItemFlags projectsTabFlags = m_focusProjectsTab ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+        m_focusProjectsTab = false;
+        if (ImGui::BeginTabItem("  [Projetos]  ", nullptr, projectsTabFlags)) {
+            if (m_requestCreateFromTools) {
+                m_list.requestCreateProject();
+                m_requestCreateFromTools = false;
+            }
             ImGui::Spacing();
             m_list.render();
             ImGui::EndTabItem();
@@ -144,6 +223,30 @@ void AppUI::render() {
             ImGui::EndTabItem();
         }
         ImGui::EndTabBar();
+    }
+
+    if (m_showClearProjectsConfirm) {
+        ImGui::OpenPopup("Limpar Projetos");
+    }
+    if (ImGui::BeginPopupModal("Limpar Projetos", &m_showClearProjectsConfirm, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::TextWrapped("Remover todos os projetos do arquivo atual?");
+        ImGui::TextWrapped("Essa acao nao pode ser desfeita.");
+        ImGui::Separator();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.60f, 0.10f, 0.10f, 1.f));
+        if (ImGui::Button("Limpar", ImVec2(110.f, 0.f))) {
+            m_store.clear();
+            m_metricsExportMessage.clear();
+            m_toolsMessage = "Projetos removidos.";
+            m_showClearProjectsConfirm = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::PopStyleColor();
+        ImGui::SameLine();
+        if (ImGui::Button("Cancelar", ImVec2(110.f, 0.f))) {
+            m_showClearProjectsConfirm = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::EndPopup();
     }
 
     ImGui::End();

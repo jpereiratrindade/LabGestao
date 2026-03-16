@@ -51,6 +51,26 @@ ListView::ListView(ProjectStore& store, CreationDefaults defaults)
     }
 }
 
+void ListView::resetCreateForm() {
+    m_showCreate = true;
+    m_formError.clear();
+    m_formName[0] = '\0';
+    m_formDesc[0] = '\0';
+    m_formCategory[0] = '\0';
+    m_formTags[0] = '\0';
+    m_formStatus = 0;
+    m_createOnDisk = true;
+    if (m_createTemplate == static_cast<int>(ProjectTemplate::Cpp) && !m_creationDefaults.cppRoot.empty()) {
+        std::snprintf(m_scaffoldBaseDir, sizeof(m_scaffoldBaseDir), "%s", m_creationDefaults.cppRoot.c_str());
+    } else if (m_createTemplate == static_cast<int>(ProjectTemplate::Python) && !m_creationDefaults.pythonRoot.empty()) {
+        std::snprintf(m_scaffoldBaseDir, sizeof(m_scaffoldBaseDir), "%s", m_creationDefaults.pythonRoot.c_str());
+    }
+}
+
+void ListView::requestCreateProject() {
+    resetCreateForm();
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 static void badgeStatus(ProjectStatus s) {
     int idx = static_cast<int>(s);
@@ -77,19 +97,7 @@ void ListView::render() {
     }
     ImGui::SameLine();
     if (ImGui::Button("+ Novo Projeto")) {
-        m_showCreate = true;
-        m_formError.clear();
-        m_formName[0]     = '\0';
-        m_formDesc[0]     = '\0';
-        m_formCategory[0] = '\0';
-        m_formTags[0]     = '\0';
-        m_formStatus      = 0;
-        m_createOnDisk    = true;
-        if (m_createTemplate == static_cast<int>(ProjectTemplate::Cpp) && !m_creationDefaults.cppRoot.empty()) {
-            std::snprintf(m_scaffoldBaseDir, sizeof(m_scaffoldBaseDir), "%s", m_creationDefaults.cppRoot.c_str());
-        } else if (m_createTemplate == static_cast<int>(ProjectTemplate::Python) && !m_creationDefaults.pythonRoot.empty()) {
-            std::snprintf(m_scaffoldBaseDir, sizeof(m_scaffoldBaseDir), "%s", m_creationDefaults.pythonRoot.c_str());
-        }
+        resetCreateForm();
     }
 
     ImGui::Separator();

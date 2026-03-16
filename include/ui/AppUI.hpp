@@ -25,6 +25,10 @@ private:
     GraphView     m_graph;
     int           m_metricsPeriodIdx{0};
     std::string   m_metricsExportMessage;
+    std::string   m_toolsMessage;
+    bool          m_focusProjectsTab{false};
+    bool          m_requestCreateFromTools{false};
+    bool          m_showClearProjectsConfirm{false};
     bool          m_themeApplied{false};
     bool          m_requestExit{false};
 };

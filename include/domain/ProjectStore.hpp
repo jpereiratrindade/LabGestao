@@ -33,6 +33,7 @@ public:
     void add(Project p);
     void update(const Project& p);
     void remove(const std::string& id);
+    void clear();
 
     std::vector<Project>& getAll();
     const std::vector<Project>& getAll() const;

@@ -6,6 +6,7 @@
 #include "backends/imgui_impl_opengl3.h"
 #include "backends/imgui_impl_sdl2.h"
 #include "imgui.h"
+#include "json.hpp"
 
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_opengl.h>
@@ -16,6 +17,7 @@
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include <sstream>
 #include <string>
@@ -24,6 +26,7 @@
 #include <vector>
 
 namespace fs = std::filesystem;
+using json = nlohmann::json;
 
 namespace {
 
@@ -32,6 +35,11 @@ struct MonitoredRoot {
     std::string category;
     std::vector<std::string> tags;
     std::vector<std::string> markerFiles;
+};
+
+struct AppSettings {
+    std::string dataDir;
+    std::vector<MonitoredRoot> monitoredRoots;
 };
 
 std::string findFontPath(const std::vector<const char*>& candidates) {
@@ -238,20 +246,114 @@ void syncAutoDiscoveredProjects(labgestao::ProjectStore& store, const std::vecto
 }
 
 std::vector<MonitoredRoot> defaultMonitoredRoots() {
-    return {
-        {
-            "/run/media/jpereiratrindade/labeco10T/dev/cpp",
-            "C++",
-            {"Auto", "C++"},
-            {"CMakeLists.txt", "meson.build", "Makefile", "compile_commands.json"}
-        },
-        {
-            "/run/media/jpereiratrindade/labeco10T/dev/python",
-            "Python",
-            {"Auto", "Python"},
-            {"pyproject.toml", "requirements.txt", "setup.py", "Pipfile"}
+    return {};
+}
+
+std::string settingsPath() {
+    return "data/settings.json";
+}
+
+fs::path inferDataDirFromRoots(const std::vector<MonitoredRoot>& roots) {
+    std::vector<fs::path> dirs;
+    dirs.reserve(roots.size());
+    for (const auto& root : roots) {
+        if (root.path.empty()) continue;
+        std::error_code ec;
+        fs::path p = fs::weakly_canonical(root.path, ec);
+        if (ec) {
+            ec.clear();
+            p = fs::absolute(root.path, ec);
         }
-    };
+        if (!ec) dirs.push_back(p.lexically_normal());
+    }
+
+    if (dirs.empty()) return fs::path("data");
+
+    fs::path common = dirs.front();
+    for (std::size_t i = 1; i < dirs.size(); i++) {
+        const fs::path& cur = dirs[i];
+        fs::path nextCommon;
+        auto itA = common.begin();
+        auto itB = cur.begin();
+        while (itA != common.end() && itB != cur.end() && *itA == *itB) {
+            nextCommon /= *itA;
+            ++itA;
+            ++itB;
+        }
+        common = nextCommon;
+        if (common.empty()) break;
+    }
+
+    if (common.empty() || common == common.root_path()) return fs::path("data");
+    return common / "data";
+}
+
+json monitoredRootToJson(const MonitoredRoot& root) {
+    json j;
+    j["path"] = root.path;
+    j["category"] = root.category;
+    j["tags"] = root.tags;
+    j["marker_files"] = root.markerFiles;
+    return j;
+}
+
+bool monitoredRootFromJson(const json& v, MonitoredRoot* out) {
+    if (!out || !v.is_object()) return false;
+    const std::string path = v.value("path", "");
+    if (path.empty()) return false;
+    out->path = path;
+    out->category = v.value("category", "");
+    out->tags = v.value("tags", std::vector<std::string>{});
+    out->markerFiles = v.value("marker_files", std::vector<std::string>{});
+    return true;
+}
+
+bool saveSettings(const AppSettings& settings, const std::string& path) {
+    json j;
+    j["data_dir"] = settings.dataDir;
+    j["monitored_roots"] = json::array();
+    for (const auto& root : settings.monitoredRoots) {
+        j["monitored_roots"].push_back(monitoredRootToJson(root));
+    }
+
+    std::ofstream out(path);
+    if (!out.is_open()) return false;
+    out << j.dump(2);
+    return out.good();
+}
+
+AppSettings loadSettingsOrDefault(const std::string& path) {
+    AppSettings settings;
+    settings.dataDir.clear();
+    settings.monitoredRoots = defaultMonitoredRoots();
+
+    std::ifstream in(path);
+    if (!in.is_open()) {
+        saveSettings(settings, path);
+        return settings;
+    }
+
+    try {
+        const json parsed = json::parse(in);
+        if (!parsed.is_object() || !parsed.contains("monitored_roots") || !parsed["monitored_roots"].is_array()) {
+            std::fprintf(stderr, "Settings warning: invalid settings.json format, using defaults.\n");
+            return settings;
+        }
+        settings.dataDir = parsed.value("data_dir", "");
+
+        std::vector<MonitoredRoot> loaded;
+        for (const auto& item : parsed["monitored_roots"]) {
+            MonitoredRoot root;
+            if (monitoredRootFromJson(item, &root)) loaded.push_back(std::move(root));
+        }
+
+        // If key exists, honor user choice (including empty list).
+        settings.monitoredRoots = std::move(loaded);
+        return settings;
+    } catch (...) {
+        std::fprintf(stderr, "Settings warning: failed to parse settings.json, using defaults.\n");
+        return settings;
+    }
 }
 
 labgestao::ListView::CreationDefaults makeCreationDefaults(const std::vector<MonitoredRoot>& roots) {
@@ -268,7 +370,7 @@ labgestao::ListView::CreationDefaults makeCreationDefaults(const std::vector<Mon
 namespace labgestao {
 
 int runApp() {
-    const std::string dataPath = "data/projects.json";
+    const std::string appSettingsPath = settingsPath();
 
     if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
         std::fprintf(stderr, "SDL_Init error: %s\n", SDL_GetError());
@@ -309,13 +411,29 @@ int runApp() {
     ImGui_ImplOpenGL3_Init("#version 330");
     loadFonts(io);
 
-    ProjectStore store;
-    if (!store.loadFromJson(dataPath)) {
-        fs::create_directories("data");
+    fs::create_directories("data");
+
+    AppSettings settings = loadSettingsOrDefault(appSettingsPath);
+    const std::vector<MonitoredRoot> monitoredRoots = settings.monitoredRoots;
+    if (settings.dataDir.empty()) {
+        settings.dataDir = inferDataDirFromRoots(monitoredRoots).string();
+        saveSettings(settings, appSettingsPath);
     }
 
-    const std::vector<MonitoredRoot> monitoredRoots = defaultMonitoredRoots();
-    syncAutoDiscoveredProjects(store, monitoredRoots);
+    const fs::path effectiveDataDir = settings.dataDir.empty() ? fs::path("data") : fs::path(settings.dataDir);
+    std::error_code dataDirEc;
+    fs::create_directories(effectiveDataDir, dataDirEc);
+    const std::string dataPath = (effectiveDataDir / "projects.json").string();
+
+    // Keep a copy of active settings next to the effective data directory for transparency.
+    saveSettings(settings, (effectiveDataDir / "settings.json").string());
+
+    ProjectStore store;
+    store.loadFromJson(dataPath);
+
+    if (!monitoredRoots.empty()) {
+        syncAutoDiscoveredProjects(store, monitoredRoots);
+    }
 
     AppUI app(store, dataPath, makeCreationDefaults(monitoredRoots));
     auto nextFolderSync = std::chrono::steady_clock::now() + std::chrono::seconds(5);
@@ -323,7 +441,7 @@ int runApp() {
     bool running = true;
     while (running) {
         const auto now = std::chrono::steady_clock::now();
-        if (now >= nextFolderSync) {
+        if (!monitoredRoots.empty() && now >= nextFolderSync) {
             syncAutoDiscoveredProjects(store, monitoredRoots);
             nextFolderSync = now + std::chrono::seconds(5);
         }

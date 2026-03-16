@@ -76,6 +76,12 @@ void ProjectStore::remove(const std::string& id) {
     }
 }
 
+void ProjectStore::clear() {
+    if (m_projects.empty()) return;
+    m_projects.clear();
+    m_dirty = true;
+}
+
 std::vector<Project>& ProjectStore::getAll() { return m_projects; }
 const std::vector<Project>& ProjectStore::getAll() const { return m_projects; }
 
