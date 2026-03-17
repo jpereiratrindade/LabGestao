@@ -39,6 +39,7 @@ static bool isCommandAvailable(const char* cmd);
 static bool isFlatpakAppInstalled(const char* appId);
 static std::string slugifyProjectName(const std::string& name);
 static std::string resolveProjectPathForOpen(const Project& p, const ListView::CreationDefaults& defaults);
+static bool projectMatchesSearchQuery(const Project& p, const ProjectStore& store, const std::string& rawQuery);
 
 ListView::ListView(ProjectStore& store, CreationDefaults defaults)
     : m_store(store)
@@ -79,11 +80,116 @@ static void badgeStatus(ProjectStatus s) {
     ImGui::PopStyleColor();
 }
 
+static std::string toLowerAscii(const std::string& value) {
+    std::string out = value;
+    std::transform(out.begin(), out.end(), out.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return out;
+}
+
+static bool containsLowered(const std::string& loweredHaystack, const std::string& loweredNeedle) {
+    if (loweredNeedle.empty()) return true;
+    return loweredHaystack.find(loweredNeedle) != std::string::npos;
+}
+
+static std::vector<std::string> splitSearchTerms(const std::string& query) {
+    std::vector<std::string> terms;
+    std::istringstream ss(query);
+    std::string term;
+    while (ss >> term) {
+        if (!term.empty()) terms.push_back(term);
+    }
+    return terms;
+}
+
+static std::string joinedConnectionNamesLower(const Project& p, const ProjectStore& store) {
+    std::string out;
+    for (const auto& cid : p.connections) {
+        for (const auto& candidate : store.getAll()) {
+            if (candidate.id != cid) continue;
+            if (!out.empty()) out.push_back(' ');
+            out += toLowerAscii(candidate.name);
+            break;
+        }
+    }
+    return out;
+}
+
+static bool projectMatchesSearchTerm(const Project& p, const ProjectStore& store, const std::string& loweredTerm) {
+    const size_t sepPos = loweredTerm.find(':');
+    const bool hasField = sepPos != std::string::npos && sepPos > 0 && (sepPos + 1) < loweredTerm.size();
+
+    const std::string lowName = toLowerAscii(p.name);
+    const std::string lowDesc = toLowerAscii(p.description);
+    const std::string lowCategory = toLowerAscii(p.category);
+    const std::string lowPath = toLowerAscii(p.source_path);
+    const std::string lowRoot = toLowerAscii(p.source_root);
+    const std::string lowStatus = toLowerAscii(statusKey(p.status));
+    const std::string lowStatusPt = toLowerAscii(statusToString(p.status));
+
+    std::string lowTags;
+    for (const auto& tag : p.tags) {
+        if (!lowTags.empty()) lowTags.push_back(' ');
+        lowTags += toLowerAscii(tag);
+    }
+
+    std::string lowConnectionIds;
+    for (const auto& cid : p.connections) {
+        if (!lowConnectionIds.empty()) lowConnectionIds.push_back(' ');
+        lowConnectionIds += toLowerAscii(cid);
+    }
+    const std::string lowConnectionNames = joinedConnectionNamesLower(p, store);
+    const std::string lowIntegration = p.auto_discovered ? "auto discovered" : "manual";
+
+    if (hasField) {
+        const std::string field = loweredTerm.substr(0, sepPos);
+        const std::string value = loweredTerm.substr(sepPos + 1);
+        if (value.empty()) return true;
+
+        if (field == "name" || field == "nome") return containsLowered(lowName, value);
+        if (field == "desc" || field == "descricao") return containsLowered(lowDesc, value);
+        if (field == "cat" || field == "categoria") return containsLowered(lowCategory, value);
+        if (field == "tag" || field == "tags") return containsLowered(lowTags, value);
+        if (field == "path" || field == "source" || field == "src") return containsLowered(lowPath, value);
+        if (field == "root" || field == "workspace") return containsLowered(lowRoot, value);
+        if (field == "status") return containsLowered(lowStatus, value) || containsLowered(lowStatusPt, value);
+        if (field == "conn" || field == "conexao" || field == "rel") {
+            return containsLowered(lowConnectionIds, value) || containsLowered(lowConnectionNames, value);
+        }
+        if (field == "integracao" || field == "integration" || field == "auto") {
+            return containsLowered(lowIntegration, value);
+        }
+
+        return false;
+    }
+
+    std::string globalHaystack;
+    globalHaystack.reserve(lowName.size() + lowDesc.size() + lowCategory.size() + lowTags.size() +
+                           lowPath.size() + lowRoot.size() + lowStatus.size() + lowStatusPt.size() +
+                           lowConnectionIds.size() + lowConnectionNames.size() + lowIntegration.size() + 16);
+    globalHaystack += lowName + " " + lowDesc + " " + lowCategory + " " + lowTags + " " +
+                     lowPath + " " + lowRoot + " " + lowStatus + " " + lowStatusPt + " " +
+                     lowConnectionIds + " " + lowConnectionNames + " " + lowIntegration;
+    return containsLowered(globalHaystack, loweredTerm);
+}
+
+static bool projectMatchesSearchQuery(const Project& p, const ProjectStore& store, const std::string& rawQuery) {
+    const std::string query = toLowerAscii(rawQuery);
+    const auto terms = splitSearchTerms(query);
+    if (terms.empty()) return true;
+
+    for (const auto& term : terms) {
+        if (!projectMatchesSearchTerm(p, store, term)) return false;
+    }
+    return true;
+}
+
 // ── Main render ──────────────────────────────────────────────────────────────
 void ListView::render() {
     // Toolbar
     ImGui::SetNextItemWidth(240.f);
-    ImGui::InputTextWithHint("##search", "Buscar projeto...", m_searchBuf, sizeof(m_searchBuf));
+    ImGui::InputTextWithHint("##search", "Buscar (nome tag: path: conn: status:)...", m_searchBuf, sizeof(m_searchBuf));
     ImGui::SameLine();
     ImGui::SetNextItemWidth(140.f);
     if (ImGui::BeginCombo("##filterstatus", m_filterStatus < 0 ? "Todos status" : kStatusLabels[m_filterStatus])) {
@@ -125,8 +231,14 @@ void ListView::render() {
 
 // ── Table ─────────────────────────────────────────────────────────────────────
 void ListView::renderTable() {
-    std::string srch = m_searchBuf;
-    std::transform(srch.begin(), srch.end(), srch.begin(), ::tolower);
+    auto joinTags = [](const Project& p) {
+        std::string out;
+        for (std::size_t i = 0; i < p.tags.size(); i++) {
+            if (i) out += "|";
+            out += p.tags[i];
+        }
+        return toLowerAscii(out);
+    };
 
     if (ImGui::BeginTable("##projects", 5,
         ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
@@ -135,9 +247,9 @@ void ListView::renderTable() {
 
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableSetupColumn("Nome",      ImGuiTableColumnFlags_DefaultSort, 2.0f);
-        ImGui::TableSetupColumn("Status",    ImGuiTableColumnFlags_NoSort,      1.0f);
+        ImGui::TableSetupColumn("Status",    0,                                 1.0f);
         ImGui::TableSetupColumn("Categoria", 0,                                 1.2f);
-        ImGui::TableSetupColumn("Tags",      ImGuiTableColumnFlags_NoSort,      1.5f);
+        ImGui::TableSetupColumn("Tags",      0,                                 1.5f);
         ImGui::TableSetupColumn("Criado em", 0,                                 1.0f);
         ImGui::TableHeadersRow();
 
@@ -146,26 +258,24 @@ void ListView::renderTable() {
         for (auto& p : m_store.getAll()) {
             if (m_filterStatus >= 0 && static_cast<int>(p.status) != m_filterStatus)
                 continue;
-            if (!srch.empty()) {
-                std::string low = p.name; std::transform(low.begin(), low.end(), low.begin(), ::tolower);
-                if (low.find(srch) == std::string::npos) continue;
-            }
+            if (!projectMatchesSearchQuery(p, m_store, m_searchBuf)) continue;
             rows.push_back(&p);
         }
 
         if (ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs()) {
-            if (sortSpecs->SpecsDirty && sortSpecs->SpecsCount > 0) {
+            if (sortSpecs->SpecsCount > 0) {
                 const ImGuiTableColumnSortSpecs spec = sortSpecs->Specs[0];
                 std::stable_sort(rows.begin(), rows.end(), [&](const Project* a, const Project* b) {
                     int cmp = 0;
                     if (spec.ColumnIndex == 0) cmp = a->name.compare(b->name);
+                    if (spec.ColumnIndex == 1) cmp = static_cast<int>(a->status) - static_cast<int>(b->status);
                     if (spec.ColumnIndex == 2) cmp = a->category.compare(b->category);
+                    if (spec.ColumnIndex == 3) cmp = joinTags(*a).compare(joinTags(*b));
                     if (spec.ColumnIndex == 4) cmp = a->created_at.compare(b->created_at);
                     if (cmp == 0) cmp = a->name.compare(b->name);
                     if (spec.SortDirection == ImGuiSortDirection_Descending) cmp = -cmp;
                     return cmp < 0;
                 });
-                sortSpecs->SpecsDirty = false;
             }
         }
 

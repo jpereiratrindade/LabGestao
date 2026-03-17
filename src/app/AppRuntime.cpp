@@ -23,6 +23,7 @@
 #include <iomanip>
 #include <sstream>
 #include <string>
+#include <cctype>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -43,6 +44,11 @@ struct AppSettings {
     std::string workspaceRoot;
     std::string dataDir;
     std::vector<MonitoredRoot> monitoredRoots;
+};
+
+struct InferredProjectMetadata {
+    std::string category;
+    std::vector<std::string> tags;
 };
 
 std::string findFontPath(const std::vector<const char*>& candidates) {
@@ -191,6 +197,112 @@ std::string getLastGitCommitDate(const std::string& projectPath) {
     return out.substr(0, 10);
 }
 
+std::string getFirstGitCommitDate(const std::string& projectPath) {
+    if (projectPath.empty()) return {};
+    const std::string cmd = "git -C " + shellEscapeSingleQuoted(projectPath) + " log --max-parents=0 -1 --format=%cs 2>/dev/null";
+    const std::string out = runAndCaptureTrimmed(cmd);
+    if (out.size() < 10) return {};
+    return out.substr(0, 10);
+}
+
+std::string isoFromSystemClock(std::chrono::system_clock::time_point tp) {
+    const std::time_t tt = std::chrono::system_clock::to_time_t(tp);
+    std::tm tm_buf {};
+#if defined(_WIN32)
+    localtime_s(&tm_buf, &tt);
+#else
+    localtime_r(&tt, &tm_buf);
+#endif
+    char buf[11] = {};
+    std::strftime(buf, sizeof(buf), "%Y-%m-%d", &tm_buf);
+    return std::string(buf);
+}
+
+std::string lastWriteTimeIso(const fs::path& p) {
+    std::error_code ec;
+    const auto ftime = fs::last_write_time(p, ec);
+    if (ec) return {};
+    const auto nowFile = fs::file_time_type::clock::now();
+    const auto nowSys = std::chrono::system_clock::now();
+    const auto sysTp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(ftime - nowFile + nowSys);
+    return isoFromSystemClock(sysTp);
+}
+
+std::string inferProjectCreatedAt(const fs::path& dir, const MonitoredRoot& root) {
+    const std::string gitBirth = getFirstGitCommitDate(dir.string());
+    if (!gitBirth.empty()) return gitBirth;
+
+    std::string best = lastWriteTimeIso(dir);
+    for (const auto& marker : root.markerFiles) {
+        const fs::path markerPath = dir / marker;
+        if (!fs::exists(markerPath)) continue;
+        const std::string markerDate = lastWriteTimeIso(markerPath);
+        if (markerDate.empty()) continue;
+        if (best.empty() || markerDate < best) best = markerDate;
+    }
+    if (!best.empty()) return best;
+    return todayIsoDate();
+}
+
+std::string toLower(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return s;
+}
+
+void appendTagUnique(std::vector<std::string>& tags, const std::string& tag) {
+    if (tag.empty()) return;
+    for (const auto& existing : tags) {
+        if (toLower(existing) == toLower(tag)) return;
+    }
+    tags.push_back(tag);
+}
+
+InferredProjectMetadata inferProjectMetadata(const fs::path& dir, const MonitoredRoot& root) {
+    const auto has = [&](const char* name) {
+        return fs::exists(dir / name);
+    };
+    const bool hasCpp = has("CMakeLists.txt") || has("meson.build") || has("compile_commands.json");
+    const bool hasPython = has("pyproject.toml") || has("requirements.txt") || has("setup.py") || has("Pipfile");
+    const bool hasRust = has("Cargo.toml");
+    const bool hasGo = has("go.mod");
+    const bool hasNode = has("package.json");
+    const bool hasJava = has("pom.xml") || has("build.gradle") || has("build.gradle.kts");
+    const bool hasDotnet = has(".sln");
+    const bool hasGit = fs::exists(dir / ".git");
+
+    std::string inferredCategory;
+    if (hasCpp) inferredCategory = "C++";
+    else if (hasPython) inferredCategory = "Python";
+    else if (hasRust) inferredCategory = "Rust";
+    else if (hasGo) inferredCategory = "Go";
+    else if (hasNode) inferredCategory = "Node";
+    else if (hasJava) inferredCategory = "Java";
+    else if (hasDotnet) inferredCategory = ".NET";
+
+    const std::string rootCategoryLower = toLower(root.category);
+    const bool useInferredAsPrimary = root.category.empty() || rootCategoryLower == "workspace";
+
+    InferredProjectMetadata out;
+    out.category = useInferredAsPrimary
+        ? (inferredCategory.empty() ? "Workspace" : inferredCategory)
+        : root.category;
+
+    for (const auto& t : root.tags) appendTagUnique(out.tags, t);
+    if (!inferredCategory.empty()) appendTagUnique(out.tags, inferredCategory);
+    if (hasGit) appendTagUnique(out.tags, "Git");
+    if (hasCpp) appendTagUnique(out.tags, "CMake");
+    if (hasPython) appendTagUnique(out.tags, "PyProject");
+    if (hasRust) appendTagUnique(out.tags, "Cargo");
+    if (hasGo) appendTagUnique(out.tags, "GoMod");
+    if (hasNode) appendTagUnique(out.tags, "NPM");
+    if (hasJava) appendTagUnique(out.tags, "JVM");
+    if (hasDotnet) appendTagUnique(out.tags, "DotNet");
+    if (out.tags.empty()) appendTagUnique(out.tags, "Auto");
+    return out;
+}
+
 void reclassifyKanbanAuto(labgestao::ProjectStore& store) {
     const std::string today = todayIsoDate();
 
@@ -296,8 +408,6 @@ bool looksLikeProjectFolder(const fs::path& dir, const MonitoredRoot& root) {
 
 std::vector<labgestao::Project> scanProjectsFromRoots(const std::vector<MonitoredRoot>& roots) {
     std::vector<labgestao::Project> discovered;
-    const std::string today = todayIsoDate();
-
     for (const auto& root : roots) {
         std::error_code ec;
         if (!fs::exists(root.path, ec) || !fs::is_directory(root.path, ec)) continue;
@@ -318,10 +428,11 @@ std::vector<labgestao::Project> scanProjectsFromRoots(const std::vector<Monitore
             p.id = makeAutoProjectId(canonicalPath);
             p.name = folderName;
             p.status = labgestao::ProjectStatus::Backlog;
-            p.category = root.category;
+            const InferredProjectMetadata metadata = inferProjectMetadata(dir, root);
+            p.category = metadata.category;
             p.description = "Projeto detectado automaticamente em pasta monitorada.";
-            p.tags = root.tags;
-            p.created_at = today;
+            p.tags = metadata.tags;
+            p.created_at = inferProjectCreatedAt(dir, root);
             p.auto_discovered = true;
             p.source_path = canonicalPath;
             p.source_root = root.path;
@@ -372,7 +483,10 @@ void syncAutoDiscoveredProjects(labgestao::ProjectStore& store, const std::vecto
         if (updated.tags != detected.tags) { updated.tags = detected.tags; changed = true; }
         if (updated.source_path != detected.source_path) { updated.source_path = detected.source_path; changed = true; }
         if (updated.source_root != detected.source_root) { updated.source_root = detected.source_root; changed = true; }
-        if (updated.created_at.empty()) { updated.created_at = detected.created_at; changed = true; }
+        if (updated.created_at.empty() || (!detected.created_at.empty() && detected.created_at < updated.created_at)) {
+            updated.created_at = detected.created_at;
+            changed = true;
+        }
         if (updated.description.empty()) { updated.description = detected.description; changed = true; }
 
         if (changed) store.update(updated);

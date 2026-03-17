@@ -4,8 +4,10 @@
 #include <cmath>
 #include <algorithm>
 #include <random>
+#include <filesystem>
 
 namespace labgestao {
+namespace fs = std::filesystem;
 
 static const ImVec4 kNodeColors[] = {
     {0.45f, 0.25f, 0.75f, 1.f},  // Backlog
@@ -16,6 +18,64 @@ static const ImVec4 kNodeColors[] = {
 };
 
 GraphView::GraphView(ProjectStore& store) : m_store(store) {}
+
+namespace {
+std::string canonicalPathOrRaw(const std::string& path) {
+    if (path.empty()) return {};
+    std::error_code ec;
+    fs::path canon = fs::weakly_canonical(fs::path(path), ec);
+    if (ec) {
+        ec.clear();
+        canon = fs::absolute(fs::path(path), ec);
+    }
+    if (ec) return fs::path(path).lexically_normal().string();
+    return canon.lexically_normal().string();
+}
+
+ImU32 scoreBorderColor(int scoreTotal) {
+    if (scoreTotal >= 80) return IM_COL32(80, 220, 120, 255);   // good
+    if (scoreTotal >= 60) return IM_COL32(240, 220, 90, 255);   // warning
+    if (scoreTotal >= 40) return IM_COL32(240, 160, 70, 255);   // attention
+    return IM_COL32(235, 90, 90, 255);                          // critical
+}
+} // namespace
+
+void GraphView::setInventorySignals(const std::vector<InventorySignal>& signals) {
+    m_inventoryByCanonicalPath.clear();
+    m_inventoryByCanonicalPath.reserve(signals.size());
+    for (const auto& signal : signals) {
+        const std::string key = canonicalPathOrRaw(signal.path);
+        if (key.empty()) continue;
+        m_inventoryByCanonicalPath[key] = signal;
+    }
+}
+
+const GraphView::InventorySignal* GraphView::findSignalForProject(const Project& p) const {
+    if (p.source_path.empty()) return nullptr;
+    const std::string key = canonicalPathOrRaw(p.source_path);
+    if (key.empty()) return nullptr;
+    const auto it = m_inventoryByCanonicalPath.find(key);
+    if (it == m_inventoryByCanonicalPath.end()) return nullptr;
+    return &it->second;
+}
+
+bool GraphView::isProjectVisible(const Project& p) const {
+    const InventorySignal* signal = findSignalForProject(p);
+    if (!signal) {
+        if (m_onlyCritical) return false;
+        return m_minScoreVisible <= 0;
+    }
+    if (signal->scoreTotal < m_minScoreVisible) return false;
+    if (m_onlyCritical && signal->scoreTotal >= m_criticalThreshold) return false;
+    return true;
+}
+
+float GraphView::nodeRadiusForProject(const Project& p, float baseRadius) const {
+    const InventorySignal* signal = findSignalForProject(p);
+    if (!signal) return baseRadius;
+    if (signal->scoreTotal < m_criticalThreshold) return baseRadius * 1.25f;
+    return baseRadius;
+}
 
 // ── Force-directed layout ─────────────────────────────────────────────────────
 void GraphView::applyForceLayout(float dt) {
@@ -93,9 +153,11 @@ void GraphView::drawGraph(ImDrawList* draw, ImVec2 origin, float scale, ImVec2 c
 
     // Edges
     for (const auto& p : projs) {
+        if (!isProjectVisible(p)) continue;
         for (const auto& cid : p.connections) {
             for (const auto& q : projs) {
                 if (q.id != cid) continue;
+                if (!isProjectVisible(q)) continue;
                 ImVec2 a = { canvasPos.x + origin.x + p.graph_x * scale,
                              canvasPos.y + origin.y + p.graph_y * scale };
                 ImVec2 b = { canvasPos.x + origin.x + q.graph_x * scale,
@@ -106,18 +168,20 @@ void GraphView::drawGraph(ImDrawList* draw, ImVec2 origin, float scale, ImVec2 c
     }
 
     // Nodes
-    const float R = 22.f * scale;
+    const float baseR = 22.f * scale;
     for (const auto& p : projs) {
+        if (!isProjectVisible(p)) continue;
         ImVec2 center = {
             canvasPos.x + origin.x + p.graph_x * scale,
             canvasPos.y + origin.y + p.graph_y * scale
         };
+        const float R = nodeRadiusForProject(p, baseR);
         int ci = static_cast<int>(p.status);
         ImVec4 cv = kNodeColors[ci];
         ImU32 col = IM_COL32(int(cv.x*255), int(cv.y*255), int(cv.z*255), 220);
-        ImU32 colBorder = (p.id == m_selectedId)
-            ? IM_COL32(255, 255, 100, 255)
-            : IM_COL32(200, 200, 200, 80);
+        const InventorySignal* signal = findSignalForProject(p);
+        ImU32 qualityBorder = signal ? scoreBorderColor(signal->scoreTotal) : IM_COL32(200, 200, 200, 80);
+        ImU32 colBorder = (p.id == m_selectedId) ? IM_COL32(255, 255, 100, 255) : qualityBorder;
 
         draw->AddCircleFilled(center, R, col, 32);
         draw->AddCircle(center, R, colBorder, 32, 2.f);
@@ -147,19 +211,43 @@ void GraphView::render() {
     }
     ImGui::SameLine();
     ImGui::TextDisabled("| Scroll = zoom  |  Arrastar fundo = pan  |  Clique = detalhes");
+    ImGui::SetNextItemWidth(120.f);
+    ImGui::SliderInt("Total Min", &m_minScoreVisible, 0, 100);
+    ImGui::SameLine();
+    ImGui::Checkbox("So criticos", &m_onlyCritical);
+    ImGui::TextDisabled("Borda por score total: verde>=80, amarelo>=60, laranja>=40, vermelho<40.");
+    ImGui::TextDisabled("Nos criticos (<%d) aparecem maiores.", m_criticalThreshold);
 
     // Connection editor for selected node
     if (!m_selectedId.empty()) {
         auto opt = m_store.findById(m_selectedId);
-        if (opt) {
+        if (opt && isProjectVisible(**opt)) {
             Project& sel = **opt;
             ImGui::SameLine();
             ImGui::Separator();
             ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.f, 1.f), "Nó: %s", sel.name.c_str());
             ImGui::SameLine(); ImGui::TextDisabled("- conectar a:");
+
+            const float itemSpacingX = 14.f;
+            const float innerSpacingX = 4.f;
+            const float lineStartX = ImGui::GetCursorScreenPos().x;
+            const float lineMaxX = lineStartX + ImGui::GetContentRegionAvail().x;
+            bool firstItem = true;
             for (auto& q : projs) {
                 if (q.id == sel.id) continue;
                 bool connected = std::find(sel.connections.begin(), sel.connections.end(), q.id) != sel.connections.end();
+                const float checkboxW = ImGui::GetFrameHeight();
+                const float labelW = ImGui::CalcTextSize(q.name.c_str()).x;
+                const float itemW = checkboxW + innerSpacingX + labelW;
+
+                if (!firstItem) {
+                    const float curX = ImGui::GetCursorScreenPos().x;
+                    if (curX + itemW > lineMaxX) {
+                        ImGui::NewLine();
+                    }
+                }
+
+                ImGui::BeginGroup();
                 if (ImGui::Checkbox(("##conn_" + q.id).c_str(), &connected)) {
                     if (connected) {
                         sel.connections.push_back(q.id);
@@ -173,8 +261,16 @@ void GraphView::render() {
                     m_store.update(sel);
                     m_store.update(q);
                 }
-                ImGui::SameLine(); ImGui::TextUnformatted(q.name.c_str()); ImGui::SameLine(0, 16.f);
+                ImGui::SameLine(0.f, innerSpacingX);
+                ImGui::TextUnformatted(q.name.c_str());
+                ImGui::EndGroup();
+
+                ImGui::SameLine(0.f, itemSpacingX);
+                firstItem = false;
             }
+            ImGui::NewLine();
+        } else {
+            m_selectedId.clear();
         }
     }
 
@@ -236,11 +332,12 @@ void GraphView::render() {
     // Click on node
     if (hovered && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
         ImVec2 mp = ImGui::GetIO().MousePos;
-        const float R = 22.f * m_scale;
         m_selectedId.clear();
         for (const auto& p : projs) {
+            if (!isProjectVisible(p)) continue;
             float px = canvasPos.x + origin.x + p.graph_x * m_scale;
             float py = canvasPos.y + origin.y + p.graph_y * m_scale;
+            const float R = nodeRadiusForProject(p, 22.f * m_scale);
             float dx = mp.x - px, dy = mp.y - py;
             if (dx*dx + dy*dy < R*R) {
                 m_selectedId = p.id;
@@ -252,17 +349,33 @@ void GraphView::render() {
     // Tooltip on hover
     if (hovered) {
         ImVec2 mp = ImGui::GetIO().MousePos;
-        const float R = 22.f * m_scale;
         m_hoveredId.clear();
         for (const auto& p : projs) {
+            if (!isProjectVisible(p)) continue;
             float px = canvasPos.x + origin.x + p.graph_x * m_scale;
             float py = canvasPos.y + origin.y + p.graph_y * m_scale;
+            const float R = nodeRadiusForProject(p, 22.f * m_scale);
             float dx = mp.x - px, dy = mp.y - py;
             if (dx*dx + dy*dy < R*R) {
                 m_hoveredId = p.id;
                 ImGui::BeginTooltip();
                 ImGui::TextColored(ImVec4(0.7f, 0.9f, 1.f, 1.f), "%s", p.name.c_str());
                 ImGui::TextDisabled("%s", statusToString(p.status).c_str());
+                if (const InventorySignal* signal = findSignalForProject(p)) {
+                    ImGui::Separator();
+                    ImGui::Text("Score total: %d", signal->scoreTotal);
+                    ImGui::Text("Operacional: %d | Maturidade: %d | Confiabilidade: %d",
+                        signal->scoreOperational, signal->scoreMaturity, signal->scoreReliability);
+                    ImGui::Text("Artefatos: %d", signal->artifacts);
+                    ImGui::TextDisabled("ADR:%s  DDD:%s  DAI:%s",
+                        signal->hasAdr ? "OK" : "-",
+                        signal->hasDdd ? "OK" : "-",
+                        signal->hasDai ? "OK" : "-");
+                    ImGui::TextDisabled("ASan/UB:%s  Static:%s  Leak:%s",
+                        signal->hasAsanUbsan ? "OK" : "-",
+                        signal->hasStaticAnalysis ? "OK" : "-",
+                        signal->hasLeakCheck ? "OK" : "-");
+                }
                 if (!p.description.empty()) ImGui::TextWrapped("%s", p.description.c_str());
                 ImGui::EndTooltip();
                 break;
