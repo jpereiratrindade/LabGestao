@@ -48,6 +48,17 @@ target_include_directories(labgestao_domain PUBLIC
 
 target_link_libraries(labgestao_domain PUBLIC nlohmann_json::nlohmann_json)
 
+# ── Application library ───────────────────────────────────────────────────────
+add_library(labgestao_application STATIC
+    src/app/ApplicationServices.cpp
+)
+
+target_include_directories(labgestao_application PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+
+target_link_libraries(labgestao_application PUBLIC labgestao_domain)
+
 # ── UI library ────────────────────────────────────────────────────────────────
 add_library(labgestao_ui STATIC
     src/ui/AppUI.cpp
@@ -60,7 +71,7 @@ target_include_directories(labgestao_ui PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 
-target_link_libraries(labgestao_ui PUBLIC labgestao_domain imgui)
+target_link_libraries(labgestao_ui PUBLIC labgestao_domain labgestao_application imgui)
 
 # ── Executable ────────────────────────────────────────────────────────────────
 add_executable(LabGestao

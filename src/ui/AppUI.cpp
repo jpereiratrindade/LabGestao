@@ -1,4 +1,5 @@
 #include "ui/AppUI.hpp"
+#include "app/ApplicationServices.hpp"
 #include "imgui.h"
 #include "json.hpp"
 #include <algorithm>
@@ -134,35 +135,6 @@ bool readSmallTextFile(const fs::path& path, std::string* out, std::size_t maxBy
     ss << in.rdbuf();
     *out = ss.str();
     return true;
-}
-
-std::optional<int> daysSinceEpoch(const std::string& isoDate) {
-    if (isoDate.size() < 10) return std::nullopt;
-    std::tm tm_buf {};
-    std::istringstream ss(isoDate.substr(0, 10));
-    ss >> std::get_time(&tm_buf, "%Y-%m-%d");
-    if (ss.fail()) return std::nullopt;
-    tm_buf.tm_hour = 12;
-    tm_buf.tm_isdst = -1;
-    std::time_t tt = std::mktime(&tm_buf);
-    if (tt < 0) return std::nullopt;
-    return static_cast<int>(tt / 86400);
-}
-
-std::optional<int> daysBetweenIso(const std::string& from, const std::string& to) {
-    const auto a = daysSinceEpoch(from);
-    const auto b = daysSinceEpoch(to);
-    if (!a || !b) return std::nullopt;
-    return *b - *a;
-}
-
-std::optional<std::string> getLastGitCommitDate(const std::string& projectPath) {
-    if (projectPath.empty()) return std::nullopt;
-    const std::string cmd = "git -C " + shellEscapeSingleQuoted(projectPath) + " log -1 --format=%cs 2>/dev/null";
-    std::string out;
-    if (!runPickerCommand(cmd, out)) return std::nullopt;
-    if (out.size() < 10) return std::nullopt;
-    return out.substr(0, 10);
 }
 
 std::string selectDirectoryWithSystemDialog(const std::string& initialDir) {
@@ -972,83 +944,12 @@ void AppUI::render() {
 }
 
 void AppUI::reclassifyKanbanAuto() {
-    const std::string today = todayISO();
-
-    auto isAutoProject = [](const Project& p) {
-        if (p.auto_discovered) return true;
-        for (const auto& tag : p.tags) {
-            if (tag == "Auto") return true;
-        }
-        return false;
-    };
-
-    std::vector<std::string> candidateIds;
-    candidateIds.reserve(m_store.getAll().size());
-    for (const auto& p : m_store.getAll()) {
-        if (isAutoProject(p)) candidateIds.push_back(p.id);
-    }
-
-    int changed = 0;
-    int unchanged = 0;
-    int skipped = 0;
-
-    for (const auto& id : candidateIds) {
-        auto opt = m_store.findById(id);
-        if (!opt || !(*opt)) {
-            skipped++;
-            continue;
-        }
-        Project* current = *opt;
-        if (!current) {
-            skipped++;
-            continue;
-        }
-
-        int openDai = 0;
-        int openImpediments = 0;
-        for (const auto& dai : current->dais) {
-            if (dai.closed) continue;
-            openDai++;
-            if (dai.kind == "Impediment") openImpediments++;
-        }
-
-        std::optional<ProjectStatus> target;
-        if (openImpediments > 0) {
-            target = ProjectStatus::Paused;
-        } else if (openDai > 0) {
-            target = ProjectStatus::Doing;
-        } else if (const auto lastCommit = getLastGitCommitDate(current->source_path); lastCommit) {
-            if (const auto age = daysBetweenIso(*lastCommit, today); age) {
-                if (*age <= 7) target = ProjectStatus::Doing;
-                else if (*age <= 30) target = ProjectStatus::Review;
-                else if (*age <= 120) target = ProjectStatus::Paused;
-                else target = ProjectStatus::Backlog;
-            }
-        }
-
-        if (!target || *target == current->status) {
-            unchanged++;
-            continue;
-        }
-
-        std::string reason;
-        if (!m_store.canMoveToStatus(*current, *target, &reason)) {
-            skipped++;
-            continue;
-        }
-
-        Project updated = *current;
-        const ProjectStatus from = updated.status;
-        updated.status = *target;
-        m_store.recordStatusChange(updated, from, updated.status, today);
-        m_store.update(updated);
-        changed++;
-    }
+    const auto result = application::reclassifyKanbanAuto(m_store);
 
     std::ostringstream msg;
-    msg << "Reclassificacao auto: " << changed << " alterado(s), "
-        << unchanged << " sem mudanca, "
-        << skipped << " ignorado(s).";
+    msg << "Reclassificacao auto: " << result.changed << " alterado(s), "
+        << result.unchanged << " sem mudanca, "
+        << result.skipped << " ignorado(s).";
     m_toolsMessage = msg.str();
 }
 

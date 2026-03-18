@@ -1,4 +1,5 @@
 #include "app/AppRuntime.hpp"
+#include "app/ApplicationServices.hpp"
 
 #include "domain/ProjectStore.hpp"
 #include "ui/AppUI.hpp"
@@ -20,7 +21,6 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <iomanip>
 #include <sstream>
 #include <string>
 #include <cctype>
@@ -147,19 +147,6 @@ std::string todayIsoDate() {
     return buf;
 }
 
-int daysSinceEpoch(const std::string& isoDate) {
-    if (isoDate.size() < 10) return -1;
-    std::tm tm_buf {};
-    std::istringstream ss(isoDate.substr(0, 10));
-    ss >> std::get_time(&tm_buf, "%Y-%m-%d");
-    if (ss.fail()) return -1;
-    tm_buf.tm_hour = 12;
-    tm_buf.tm_isdst = -1;
-    std::time_t tt = std::mktime(&tm_buf);
-    if (tt < 0) return -1;
-    return static_cast<int>(tt / 86400);
-}
-
 std::string shellEscapeSingleQuoted(const std::string& s) {
     std::string out;
     out.reserve(s.size() + 8);
@@ -187,14 +174,6 @@ std::string runAndCaptureTrimmed(const std::string& cmd) {
 
     while (!out.empty() && (out.back() == '\n' || out.back() == '\r')) out.pop_back();
     return out;
-}
-
-std::string getLastGitCommitDate(const std::string& projectPath) {
-    if (projectPath.empty()) return {};
-    const std::string cmd = "git -C " + shellEscapeSingleQuoted(projectPath) + " log -1 --format=%cs 2>/dev/null";
-    const std::string out = runAndCaptureTrimmed(cmd);
-    if (out.size() < 10) return {};
-    return out.substr(0, 10);
 }
 
 std::string getFirstGitCommitDate(const std::string& projectPath) {
@@ -301,72 +280,6 @@ InferredProjectMetadata inferProjectMetadata(const fs::path& dir, const Monitore
     if (hasDotnet) appendTagUnique(out.tags, "DotNet");
     if (out.tags.empty()) appendTagUnique(out.tags, "Auto");
     return out;
-}
-
-void reclassifyKanbanAuto(labgestao::ProjectStore& store) {
-    const std::string today = todayIsoDate();
-
-    auto isAutoProject = [](const labgestao::Project& p) {
-        if (p.auto_discovered) return true;
-        for (const auto& tag : p.tags) {
-            if (tag == "Auto") return true;
-        }
-        return false;
-    };
-
-    std::vector<std::string> ids;
-    ids.reserve(store.getAll().size());
-    for (const auto& p : store.getAll()) {
-        if (isAutoProject(p)) ids.push_back(p.id);
-    }
-
-    for (const auto& id : ids) {
-        auto opt = store.findById(id);
-        if (!opt || !(*opt)) continue;
-        labgestao::Project* current = *opt;
-        if (!current) continue;
-
-        int openDai = 0;
-        int openImpediments = 0;
-        for (const auto& dai : current->dais) {
-            if (dai.closed) continue;
-            openDai++;
-            if (dai.kind == "Impediment") openImpediments++;
-        }
-
-        labgestao::ProjectStatus target = current->status;
-        bool hasSignal = false;
-        if (openImpediments > 0) {
-            target = labgestao::ProjectStatus::Paused;
-            hasSignal = true;
-        } else if (openDai > 0) {
-            target = labgestao::ProjectStatus::Doing;
-            hasSignal = true;
-        } else {
-            const std::string lastCommit = getLastGitCommitDate(current->source_path);
-            if (!lastCommit.empty()) {
-                const int age = daysSinceEpoch(today) - daysSinceEpoch(lastCommit);
-                if (age >= 0) {
-                    hasSignal = true;
-                    if (age <= 7) target = labgestao::ProjectStatus::Doing;
-                    else if (age <= 30) target = labgestao::ProjectStatus::Review;
-                    else if (age <= 120) target = labgestao::ProjectStatus::Paused;
-                    else target = labgestao::ProjectStatus::Backlog;
-                }
-            }
-        }
-
-        if (!hasSignal || target == current->status) continue;
-
-        std::string reason;
-        if (!store.canMoveToStatus(*current, target, &reason)) continue;
-
-        labgestao::Project updated = *current;
-        const labgestao::ProjectStatus from = updated.status;
-        updated.status = target;
-        store.recordStatusChange(updated, from, updated.status, today);
-        store.update(updated);
-    }
 }
 
 std::string canonicalPathOrRaw(const fs::path& p) {
@@ -713,7 +626,7 @@ int runApp() {
 
     if (!monitoredRoots.empty()) {
         syncAutoDiscoveredProjects(store, monitoredRoots);
-        reclassifyKanbanAuto(store);
+        application::reclassifyKanbanAuto(store);
     }
 
     AppUI app(store, dataPath, appSettingsPath, settings.workspaceRoot, makeCreationDefaults(monitoredRoots));
