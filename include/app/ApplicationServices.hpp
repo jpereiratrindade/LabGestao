@@ -2,7 +2,17 @@
 
 #include "domain/ProjectStore.hpp"
 
+#include <string>
+#include <vector>
+
 namespace labgestao::application {
+
+struct MonitoredRoot {
+    std::string path;
+    std::string category;
+    std::vector<std::string> tags;
+    std::vector<std::string> markerFiles;
+};
 
 struct ReclassifyKanbanAutoResult {
     int changed{0};
@@ -10,6 +20,7 @@ struct ReclassifyKanbanAutoResult {
     int skipped{0};
 };
 
+void syncAutoDiscoveredProjects(ProjectStore& store, const std::vector<MonitoredRoot>& roots);
 ReclassifyKanbanAutoResult reclassifyKanbanAuto(ProjectStore& store);
 
 } // namespace labgestao::application

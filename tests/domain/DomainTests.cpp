@@ -1,9 +1,11 @@
+#include "app/ApplicationServices.hpp"
 #include "domain/Project.hpp"
 #include "domain/ProjectScaffold.hpp"
 #include "domain/ProjectStore.hpp"
 
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -14,6 +16,9 @@ using labgestao::ProjectStatus;
 using labgestao::ProjectStore;
 using labgestao::ProjectTemplate;
 using labgestao::ScaffoldRequest;
+using labgestao::application::MonitoredRoot;
+using labgestao::application::reclassifyKanbanAuto;
+using labgestao::application::syncAutoDiscoveredProjects;
 
 namespace {
 
@@ -207,6 +212,110 @@ void testScaffold() {
     fs::remove_all(base, ec);
 }
 
+void testApplicationReclassifyFromDaiSignals() {
+    ProjectStore store;
+
+    Project p;
+    p.id = "auto-1";
+    p.name = "Auto One";
+    p.status = ProjectStatus::Backlog;
+    p.auto_discovered = true;
+    p.description = "desc";
+    p.category = "C++";
+    p.tags = {"Auto"};
+    p.created_at = "2026-03-01";
+    p.dais.push_back(Project::DaiEntry{"d1", "Impediment", "Bloqueio", "dev", "", "2026-03-02", "", false, ""});
+    store.add(p);
+
+    const auto result = reclassifyKanbanAuto(store);
+    expectEqInt(result.changed, 1, "application reclassify should change auto project with open impediment");
+    expectEqInt(result.unchanged, 0, "application reclassify unchanged count");
+    expectEqInt(result.skipped, 0, "application reclassify skipped count");
+
+    auto updated = store.findById("auto-1");
+    expect(updated.has_value(), "updated project should exist");
+    expectEqInt(static_cast<int>((*updated)->status), static_cast<int>(ProjectStatus::Paused), "auto project should move to Paused");
+    expectEqInt(static_cast<int>((*updated)->status_history.size()), 1, "status history should record one transition");
+}
+
+void testApplicationReclassifyRespectsInvariants() {
+    ProjectStore store;
+
+    Project p;
+    p.id = "auto-2";
+    p.name = "Auto Two";
+    p.status = ProjectStatus::Backlog;
+    p.auto_discovered = true;
+    p.created_at = "2026-03-01";
+    p.dais.push_back(Project::DaiEntry{"d1", "Action", "Implementar", "dev", "", "2026-03-02", "", false, ""});
+    store.add(p);
+
+    const auto result = reclassifyKanbanAuto(store);
+    expectEqInt(result.changed, 0, "application reclassify should not force invalid transition");
+    expectEqInt(result.unchanged, 0, "application reclassify unchanged count when transition is blocked");
+    expectEqInt(result.skipped, 1, "application reclassify should skip blocked transition");
+
+    auto updated = store.findById("auto-2");
+    expect(updated.has_value(), "project should still exist");
+    expectEqInt(static_cast<int>((*updated)->status), static_cast<int>(ProjectStatus::Backlog), "project should remain Backlog");
+    expectEqInt(static_cast<int>((*updated)->status_history.size()), 0, "status history should remain empty");
+}
+
+void testApplicationSyncAutoDiscoveredProjects() {
+    ProjectStore store;
+
+    Project manual;
+    manual.id = "manual-1";
+    manual.name = "Manual";
+    manual.status = ProjectStatus::Backlog;
+    manual.auto_discovered = false;
+    store.add(manual);
+
+    Project staleAuto;
+    staleAuto.id = "auto-stale";
+    staleAuto.name = "Old Auto";
+    staleAuto.status = ProjectStatus::Backlog;
+    staleAuto.auto_discovered = true;
+    staleAuto.source_path = "/tmp/does-not-exist";
+    store.add(staleAuto);
+
+    const fs::path base = fs::temp_directory_path() / ("labgestao-sync-tests-" + ProjectStore::generateId());
+    const fs::path repo = base / "repo_one";
+    fs::create_directories(repo);
+    std::ofstream(repo / "CMakeLists.txt") << "cmake_minimum_required(VERSION 3.20)\n";
+
+    MonitoredRoot root;
+    root.path = base.string();
+    root.category = "Workspace";
+    root.tags = {"Auto"};
+    root.markerFiles = {"CMakeLists.txt"};
+
+    syncAutoDiscoveredProjects(store, {root});
+
+    expectEqInt(static_cast<int>(store.getAll().size()), 2, "sync should keep manual project and replace stale auto project");
+
+    bool foundManual = false;
+    bool foundDetected = false;
+    for (const auto& p : store.getAll()) {
+        if (p.id == "manual-1") {
+            foundManual = true;
+            expect(!p.auto_discovered, "manual project must remain manual");
+        }
+        if (p.name == "repo_one") {
+            foundDetected = true;
+            expect(p.auto_discovered, "detected project must be auto_discovered");
+            expectEqStr(p.source_root, base.string(), "detected project source_root");
+        }
+        expect(p.id != "auto-stale", "stale auto project should be removed");
+    }
+
+    expect(foundManual, "manual project should still exist after sync");
+    expect(foundDetected, "new auto project should be discovered");
+
+    std::error_code ec;
+    fs::remove_all(base, ec);
+}
+
 } // namespace
 
 int main() {
@@ -215,6 +324,9 @@ int main() {
     testGlobalMetrics();
     testJsonRoundtrip();
     testScaffold();
+    testApplicationReclassifyFromDaiSignals();
+    testApplicationReclassifyRespectsInvariants();
+    testApplicationSyncAutoDiscoveredProjects();
 
     if (g_failures == 0) {
         std::cout << "All domain tests passed.\n";

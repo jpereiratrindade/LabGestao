@@ -86,7 +86,7 @@ add_executable(LabGestaoDomainTests
     tests/domain/DomainTests.cpp
 )
 
-target_link_libraries(LabGestaoDomainTests PRIVATE labgestao_domain)
+target_link_libraries(LabGestaoDomainTests PRIVATE labgestao_domain labgestao_application)
 
 add_test(
     NAME domain_tests
