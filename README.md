@@ -89,6 +89,10 @@ cmake --build build-ninja --parallel
 ctest --test-dir build-ninja --output-on-failure
 ```
 
+Estado atual:
+- suite de testes de dominio/persistencia/scaffold ativa em `tests/domain/DomainTests.cpp` (executada via `ctest`);
+- regras de DoR/DoD, metricas de fluxo e roundtrip JSON cobertas por testes automatizados.
+
 ## Workspace e pastas monitoradas (configuravel)
 
 As roots monitoradas nao ficam mais hardcoded no codigo.
@@ -157,6 +161,15 @@ A classificacao automatica (manual pelo menu e aplicada no startup) segue esta p
 - `> 120 dias` -> `Backlog`
 
 Mudancas validas registram historico de transicoes no projeto.
+
+Nota de arquitetura:
+- a orquestracao de reclassificacao/sincronizacao ainda aparece em mais de um ponto da aplicacao;
+- ver proposta de consolidacao em `docs/adr/ADR-0005-application-services-for-orchestration.md`.
+
+## DAI/ADR e Metricas na UI
+
+- Na aba de detalhes do projeto, a UI permite criar ADR e criar/fechar itens DAI.
+- A aba de metricas exibe indicadores globais de fluxo (WIP, throughput, aging medio, impedimentos) para janelas de 7/14/30 dias.
 
 ## Tabela de projetos
 

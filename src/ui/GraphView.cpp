@@ -364,8 +364,9 @@ void GraphView::render() {
                 if (const InventorySignal* signal = findSignalForProject(p)) {
                     ImGui::Separator();
                     ImGui::Text("Score total: %d", signal->scoreTotal);
-                    ImGui::Text("Operacional: %d | Maturidade: %d | Confiabilidade: %d",
-                        signal->scoreOperational, signal->scoreMaturity, signal->scoreReliability);
+                    ImGui::Text("Operacional: %d | Maturidade: %d", signal->scoreOperational, signal->scoreMaturity);
+                    ImGui::Text("Confiab Config: %d | Confiab Exec: %d",
+                        signal->scoreReliability, signal->scoreReliabilityExec);
                     ImGui::Text("Artefatos: %d", signal->artifacts);
                     ImGui::TextDisabled("ADR:%s  DDD:%s  DAI:%s",
                         signal->hasAdr ? "OK" : "-",

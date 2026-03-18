@@ -27,7 +27,8 @@ private:
         std::string buildSystem;
         int scoreOperational{0}; // 0..100
         int scoreMaturity{0};    // 0..100
-        int scoreReliability{0}; // 0..100
+        int scoreReliability{0};     // 0..100 (Config)
+        int scoreReliabilityExec{0}; // 0..100 (Exec)
         int scoreTotal{0};       // 0..100 (50/30/20)
         int detectedArtifacts{0};
         bool hasReadme{false};
@@ -47,6 +48,13 @@ private:
         bool hasComplexityGuard{false};
         bool hasCycleGuard{false};
         bool hasFormatLint{false};
+        bool hasAsanUbsanExec{false};
+        bool hasLeakCheckExec{false};
+        bool hasStaticAnalysisExec{false};
+        bool hasStrictWarningsExec{false};
+        bool hasComplexityGuardExec{false};
+        bool hasCycleGuardExec{false};
+        bool hasFormatLintExec{false};
         bool integratedWithLabGestao{false};
     };
 
@@ -84,6 +92,8 @@ private:
     char          m_repoSearchBuf[256]{};
     int           m_repoMinScore{0};
     bool          m_repoOnlyIntegrated{false};
+    int           m_repoSortMode{0}; // 0=Total, 1=Operacional, 2=Maturidade, 3=ConfiabCfg, 4=ConfiabExec
+    bool          m_repoSortDesc{true};
     std::vector<RepoInventoryEntry> m_repoInventory;
     std::string   m_repoInventoryRoot;
     std::string   m_repoInventoryMessage;

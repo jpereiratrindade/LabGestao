@@ -10,6 +10,13 @@ Formato recomendado:
 
 ## Entradas
 
+### 2026-03-18
+- Decision: consolidar avaliacao documental/codigo para alinhar plano com estado real do projeto.
+- Decision: registrar formalmente a necessidade de extrair `Application Services` para eliminar duplicacao de orquestracao.
+- Action: adicionar ADR-0005 propondo camada de aplicacao para fluxos de sincronizacao/reclassificacao.
+- Action: atualizar `DDD.md` e `README.md` para refletir funcionalidades ja implementadas (testes de dominio, metricas de fluxo e gestao de DAI/ADR na UI).
+- Action: registrar no DAI que o impedimento "sem testes automatizados" de 2026-03-16 foi parcialmente mitigado com suite de dominio/persistencia.
+
 ### 2026-03-16
 - Decision: formalizar arquitetura com DDD e ADR para reduzir conhecimento tacito no repositorio.
 - Action: criar base documental em `docs/architecture`, `docs/adr` e `docs/dai`.

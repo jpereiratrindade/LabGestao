@@ -13,7 +13,8 @@ public:
         int scoreTotal{0};
         int scoreOperational{0};
         int scoreMaturity{0};
-        int scoreReliability{0};
+        int scoreReliability{0};     // config
+        int scoreReliabilityExec{0}; // exec
         int artifacts{0};
         bool hasAdr{false};
         bool hasDdd{false};

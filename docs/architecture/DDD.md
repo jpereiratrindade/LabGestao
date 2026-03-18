@@ -84,6 +84,12 @@ A camada de UI (`src/ui`) orquestra casos de uso e aciona regras de dominio (`sr
 A inicializacao (`src/app/AppRuntime.cpp`) sincroniza auto-descoberta e aplica reclassificacao automatica do Kanban.
 Persistencia atual via JSON em `<data_dir>/projects.json`, com configuracao em `~/.config/labgestao/settings.json`.
 
+## Estado atual (2026-03-18)
+- Ja existem testes automatizados de dominio/persistencia/scaffold em `tests/domain/DomainTests.cpp`.
+- Metricas de fluxo por projeto e globais estao implementadas no dominio (`ProjectStore`) e exibidas na UI.
+- Cadastro e fechamento de DAI, assim como cadastro de ADR por projeto, ja estao disponiveis na UI.
+- Ainda existe duplicacao de orquestracao entre runtime e UI em fluxos como reclassificacao automatica.
+
 ## Politica de Reclassificacao (Kanban Auto)
 Aplicada para projetos auto-descobertos:
 
@@ -98,6 +104,6 @@ Aplicada para projetos auto-descobertos:
 Transicoes validas devem passar por `canMoveToStatus` e ser registradas em `status_history`.
 
 ## Proximos passos DDD
-1. Extrair casos de uso explicitos (`Application Services`) para reduzir logica em UI.
-2. Criar validadores de invariantes de dominio fora da camada de apresentacao.
-3. Introduzir testes de unidade no dominio e testes de integracao para persistencia.
+1. Extrair casos de uso explicitos (`Application Services`) para reduzir logica em UI/runtime e eliminar duplicacao de orquestracao.
+2. Expandir cobertura de testes para camada de aplicacao (casos de uso), mantendo os testes de dominio existentes.
+3. Criar validadores adicionais de invariantes de dominio fora da camada de apresentacao.

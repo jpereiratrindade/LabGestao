@@ -393,6 +393,13 @@ bool isReliabilityRelevantFile(const std::string& relPathLower) {
     return false;
 }
 
+bool isCiFile(const std::string& relPathLower) {
+    if (relPathLower.rfind(".github/workflows/", 0) == 0) return true;
+    if (relPathLower == ".gitlab-ci.yml") return true;
+    if (relPathLower.rfind(".circleci/", 0) == 0) return true;
+    return false;
+}
+
 bool repoHasFileToken(const std::vector<std::string>& files, const std::vector<std::string>& tokens) {
     for (const auto& rel : files) {
         const std::string low = toLowerAscii(rel);
@@ -408,6 +415,22 @@ bool repoHasAnyPatternInRelevantFiles(const fs::path& root, const std::vector<st
         std::string relLow = toLowerAscii(rel);
         std::replace(relLow.begin(), relLow.end(), '\\', '/');
         if (!isReliabilityRelevantFile(relLow)) continue;
+
+        std::string content;
+        if (!readSmallTextFile(root / fs::path(rel), &content)) continue;
+        const std::string lowContent = toLowerAscii(content);
+        for (const auto& pattern : patterns) {
+            if (lowContent.find(pattern) != std::string::npos) return true;
+        }
+    }
+    return false;
+}
+
+bool repoHasAnyPatternInCiFiles(const fs::path& root, const std::vector<std::string>& files, const std::vector<std::string>& patterns) {
+    for (const auto& rel : files) {
+        std::string relLow = toLowerAscii(rel);
+        std::replace(relLow.begin(), relLow.end(), '\\', '/');
+        if (!isCiFile(relLow)) continue;
 
         std::string content;
         if (!readSmallTextFile(root / fs::path(rel), &content)) continue;
@@ -513,10 +536,11 @@ int computeMaturityScore(bool hasAdr, bool hasDdd, bool hasDai, int governanceSi
     return std::clamp(score, 0, 100);
 }
 
-int computeCompositeScore(int operationalScore, int maturityScore, int reliabilityScore) {
-    const double weighted = static_cast<double>(operationalScore) * 0.50
+int computeCompositeScore(int operationalScore, int maturityScore, int reliabilityConfigScore, int reliabilityExecScore) {
+    const double weighted = static_cast<double>(operationalScore) * 0.45
                           + static_cast<double>(maturityScore) * 0.30
-                          + static_cast<double>(reliabilityScore) * 0.20;
+                          + static_cast<double>(reliabilityConfigScore) * 0.15
+                          + static_cast<double>(reliabilityExecScore) * 0.10;
     return std::clamp(static_cast<int>(std::lround(weighted)), 0, 100);
 }
 
@@ -732,6 +756,7 @@ void AppUI::render() {
                 s.scoreOperational = item.scoreOperational;
                 s.scoreMaturity = item.scoreMaturity;
                 s.scoreReliability = item.scoreReliability;
+                s.scoreReliabilityExec = item.scoreReliabilityExec;
                 s.artifacts = item.detectedArtifacts;
                 s.hasAdr = item.hasAdr;
                 s.hasDdd = item.hasDdd;
@@ -1119,18 +1144,20 @@ void AppUI::renderFlowMetricsTab() {
     if (m_repoInventory.empty()) {
         ImGui::TextDisabled("Sem dados de inventario.");
     } else {
-        float sumTotal = 0.f, sumOper = 0.f, sumMatur = 0.f, sumConfiab = 0.f;
+        float sumTotal = 0.f, sumOper = 0.f, sumMatur = 0.f, sumConfiabCfg = 0.f, sumConfiabExec = 0.f;
         for (const auto& repo : m_repoInventory) {
             sumTotal += static_cast<float>(repo.scoreTotal);
             sumOper += static_cast<float>(repo.scoreOperational);
             sumMatur += static_cast<float>(repo.scoreMaturity);
-            sumConfiab += static_cast<float>(repo.scoreReliability);
+            sumConfiabCfg += static_cast<float>(repo.scoreReliability);
+            sumConfiabExec += static_cast<float>(repo.scoreReliabilityExec);
         }
         const float denom = static_cast<float>(m_repoInventory.size());
         ImGui::Text("Media Total: %.1f", sumTotal / denom);
         ImGui::Text("Media Operacional: %.1f", sumOper / denom);
         ImGui::Text("Media Maturidade: %.1f", sumMatur / denom);
-        ImGui::Text("Media Confiabilidade: %.1f", sumConfiab / denom);
+        ImGui::Text("Media Confiab (Config): %.1f", sumConfiabCfg / denom);
+        ImGui::Text("Media Confiab (Exec): %.1f", sumConfiabExec / denom);
     }
 
     ImGui::Spacing();
@@ -1298,16 +1325,17 @@ bool AppUI::exportExecutiveReport(std::string* outputPath, std::string* errorMsg
         return false;
     }
 
-    float avgTotal = 0.f, avgOper = 0.f, avgMatur = 0.f, avgConfiab = 0.f;
+    float avgTotal = 0.f, avgOper = 0.f, avgMatur = 0.f, avgConfiabCfg = 0.f, avgConfiabExec = 0.f;
     if (!m_repoInventory.empty()) {
         for (const auto& repo : m_repoInventory) {
             avgTotal += static_cast<float>(repo.scoreTotal);
             avgOper += static_cast<float>(repo.scoreOperational);
             avgMatur += static_cast<float>(repo.scoreMaturity);
-            avgConfiab += static_cast<float>(repo.scoreReliability);
+            avgConfiabCfg += static_cast<float>(repo.scoreReliability);
+            avgConfiabExec += static_cast<float>(repo.scoreReliabilityExec);
         }
         const float n = static_cast<float>(m_repoInventory.size());
-        avgTotal /= n; avgOper /= n; avgMatur /= n; avgConfiab /= n;
+        avgTotal /= n; avgOper /= n; avgMatur /= n; avgConfiabCfg /= n; avgConfiabExec /= n;
     }
 
     out << "# Relatorio Executivo - LabGestao\n\n";
@@ -1316,7 +1344,8 @@ bool AppUI::exportExecutiveReport(std::string* outputPath, std::string* errorMsg
     out << "- Media Total: " << std::fixed << std::setprecision(1) << avgTotal << "\n";
     out << "- Media Operacional: " << std::fixed << std::setprecision(1) << avgOper << "\n";
     out << "- Media Maturidade: " << std::fixed << std::setprecision(1) << avgMatur << "\n";
-    out << "- Media Confiabilidade: " << std::fixed << std::setprecision(1) << avgConfiab << "\n\n";
+    out << "- Media Confiab (Config): " << std::fixed << std::setprecision(1) << avgConfiabCfg << "\n";
+    out << "- Media Confiab (Exec): " << std::fixed << std::setprecision(1) << avgConfiabExec << "\n\n";
 
     out << "## Top 10 Criticos\n\n";
     const auto top10 = topCriticalRepos(10);
@@ -1434,7 +1463,38 @@ void AppUI::scanWorkspaceInventory() {
             item.hasCycleGuard,
             item.hasFormatLint
         );
-        item.scoreTotal = computeCompositeScore(item.scoreOperational, item.scoreMaturity, item.scoreReliability);
+
+        item.hasAsanUbsanExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {
+            "-fsanitize=address,undefined", "-fsanitize=undefined,address", "-fsanitize=address", "-fsanitize=undefined"
+        });
+        item.hasLeakCheckExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {
+            "valgrind", "detect_leaks=1", "lsan_options"
+        });
+        item.hasStaticAnalysisExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"clang-tidy", "cppcheck"});
+        const bool hasWallExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"-wall"});
+        const bool hasWextraExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"-wextra"});
+        const bool hasWpedanticExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"-wpedantic"});
+        const bool hasWerrorExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"-werror"});
+        item.hasStrictWarningsExec = hasWallExec && hasWextraExec && (hasWpedanticExec || hasWerrorExec);
+        item.hasComplexityGuardExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"lizard", "oclint", "cyclomatic", "cognitive complexity"});
+        item.hasCycleGuardExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"include-cycle", "dependency cycle", "cycle check", "deptrac", "module deps"});
+        item.hasFormatLintExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"clang-format", "format-check"});
+        item.scoreReliabilityExec = computeReliabilityScore(
+            item.hasAsanUbsanExec,
+            item.hasLeakCheckExec,
+            item.hasStaticAnalysisExec,
+            item.hasStrictWarningsExec,
+            item.hasComplexityGuardExec,
+            item.hasCycleGuardExec,
+            item.hasFormatLintExec
+        );
+
+        item.scoreTotal = computeCompositeScore(
+            item.scoreOperational,
+            item.scoreMaturity,
+            item.scoreReliability,
+            item.scoreReliabilityExec
+        );
 
         for (const auto& p : m_store.getAll()) {
             if (pathEqualsBestEffort(p.source_path, item.path)) {
@@ -1505,6 +1565,17 @@ void AppUI::renderInventoryTab() {
     ImGui::SliderInt("Total Min", &m_repoMinScore, 0, 100);
     ImGui::SameLine();
     ImGui::Checkbox("So integrados", &m_repoOnlyIntegrated);
+    ImGui::SameLine();
+    static const char* kSortLabels[] = {"Total", "Operacional", "Maturidade", "Confiab(Config)", "Confiab(Exec)"};
+    ImGui::SetNextItemWidth(150.f);
+    if (ImGui::BeginCombo("Ordenar", kSortLabels[m_repoSortMode])) {
+        for (int i = 0; i < 5; i++) {
+            if (ImGui::Selectable(kSortLabels[i], m_repoSortMode == i)) m_repoSortMode = i;
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    ImGui::Checkbox("Desc", &m_repoSortDesc);
 
     if (!m_repoInventoryMessage.empty()) {
         ImGui::TextWrapped("%s", m_repoInventoryMessage.c_str());
@@ -1529,70 +1600,127 @@ void AppUI::renderInventoryTab() {
     float tableWidth = ImGui::GetContentRegionAvail().x - detailWidth - (detailWidth > 0 ? 8.f : 0.f);
 
     ImGui::BeginChild("##InventoryTableRegion", ImVec2(tableWidth, 0.f), false);
+    enum InventorySortKey : ImGuiID {
+        kSortRepo = 1,
+        kSortTotal,
+        kSortOper,
+        kSortMatur,
+        kSortConfCfg,
+        kSortConfExec,
+        kSortBuild,
+        kSortAdr,
+        kSortDdd,
+        kSortDai,
+        kSortGov,
+        kSortAsanUb,
+        kSortLeak,
+        kSortStatic,
+        kSortWarn,
+        kSortComplex,
+        kSortCycles,
+        kSortFormat,
+        kSortReadme,
+        kSortCi,
+        kSortTests,
+        kSortArtifacts
+    };
     if (ImGui::BeginTable("##repo_inventory", 22,
         ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
         ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp |
         ImGuiTableFlags_Resizable | ImGuiTableFlags_Sortable)) {
         ImGui::TableSetupScrollFreeze(0, 1);
-        ImGui::TableSetupColumn("Repo",      ImGuiTableColumnFlags_DefaultSort, 2.2f);
-        ImGui::TableSetupColumn("Total(Escore)", 0,                             0.8f);
-        ImGui::TableSetupColumn("Oper",      0,                                 0.8f);
-        ImGui::TableSetupColumn("Matur",     0,                                 0.8f);
-        ImGui::TableSetupColumn("Confiab",   0,                                 0.8f);
-        ImGui::TableSetupColumn("Build",     0,                                 1.0f);
-        ImGui::TableSetupColumn("ADR",       0,                                 0.6f);
-        ImGui::TableSetupColumn("DDD",       0,                                 0.6f);
-        ImGui::TableSetupColumn("DAI",       0,                                 0.6f);
-        ImGui::TableSetupColumn("Gov",       0,                                 0.7f);
-        ImGui::TableSetupColumn("ASan/UB",   0,                                 0.7f);
-        ImGui::TableSetupColumn("Leak",      0,                                 0.6f);
-        ImGui::TableSetupColumn("Static",    0,                                 0.7f);
-        ImGui::TableSetupColumn("Warn",      0,                                 0.6f);
-        ImGui::TableSetupColumn("Complex",   0,                                 0.8f);
-        ImGui::TableSetupColumn("Cycles",    0,                                 0.7f);
-        ImGui::TableSetupColumn("Format",    0,                                 0.7f);
-        ImGui::TableSetupColumn("README",    0,                                 0.7f);
-        ImGui::TableSetupColumn("CI",        0,                                 0.6f);
-        ImGui::TableSetupColumn("Testes",    0,                                 0.8f);
-        ImGui::TableSetupColumn("Artefatos", 0,                                 0.9f);
-        ImGui::TableSetupColumn("Integrado", 0,                                 0.9f);
+        ImGui::TableSetupColumn("Repo",      ImGuiTableColumnFlags_DefaultSort, 2.2f, kSortRepo);
+        ImGui::TableSetupColumn("Total(Escore)", 0,                             0.8f, kSortTotal);
+        ImGui::TableSetupColumn("Oper",      0,                                 0.8f, kSortOper);
+        ImGui::TableSetupColumn("Matur",     0,                                 0.8f, kSortMatur);
+        ImGui::TableSetupColumn("ConfCfg",   0,                                 0.8f, kSortConfCfg);
+        ImGui::TableSetupColumn("ConfExec",  0,                                 0.8f, kSortConfExec);
+        ImGui::TableSetupColumn("Build",     0,                                 1.0f, kSortBuild);
+        ImGui::TableSetupColumn("ADR",       0,                                 0.6f, kSortAdr);
+        ImGui::TableSetupColumn("DDD",       0,                                 0.6f, kSortDdd);
+        ImGui::TableSetupColumn("DAI",       0,                                 0.6f, kSortDai);
+        ImGui::TableSetupColumn("Gov",       0,                                 0.7f, kSortGov);
+        ImGui::TableSetupColumn("ASan/UB",   0,                                 0.7f, kSortAsanUb);
+        ImGui::TableSetupColumn("Leak",      0,                                 0.6f, kSortLeak);
+        ImGui::TableSetupColumn("Static",    0,                                 0.7f, kSortStatic);
+        ImGui::TableSetupColumn("Warn",      0,                                 0.6f, kSortWarn);
+        ImGui::TableSetupColumn("Complex",   0,                                 0.8f, kSortComplex);
+        ImGui::TableSetupColumn("Cycles",    0,                                 0.7f, kSortCycles);
+        ImGui::TableSetupColumn("Format",    0,                                 0.7f, kSortFormat);
+        ImGui::TableSetupColumn("README",    0,                                 0.7f, kSortReadme);
+        ImGui::TableSetupColumn("CI",        0,                                 0.6f, kSortCi);
+        ImGui::TableSetupColumn("Testes",    0,                                 0.8f, kSortTests);
+        ImGui::TableSetupColumn("Artefatos", 0,                                 0.9f, kSortArtifacts);
         ImGui::TableHeadersRow();
 
-        if (ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs()) {
-            if (sortSpecs->SpecsCount > 0) {
-                const ImGuiTableColumnSortSpecs spec = sortSpecs->Specs[0];
-                std::stable_sort(rows.begin(), rows.end(), [&](const RepoInventoryEntry* a, const RepoInventoryEntry* b) {
-                    int cmp = 0;
-                    switch (spec.ColumnIndex) {
-                        case 0: cmp = a->name.compare(b->name); break;
-                        case 1: cmp = a->scoreTotal - b->scoreTotal; break;
-                        case 2: cmp = a->scoreOperational - b->scoreOperational; break;
-                        case 3: cmp = a->scoreMaturity - b->scoreMaturity; break;
-                        case 4: cmp = a->scoreReliability - b->scoreReliability; break;
-                        case 5: cmp = a->buildSystem.compare(b->buildSystem); break;
-                        case 6: cmp = static_cast<int>(a->hasAdr) - static_cast<int>(b->hasAdr); break;
-                        case 7: cmp = static_cast<int>(a->hasDdd) - static_cast<int>(b->hasDdd); break;
-                        case 8: cmp = static_cast<int>(a->hasDai) - static_cast<int>(b->hasDai); break;
-                        case 9: cmp = a->governanceSignals - b->governanceSignals; break;
-                        case 10: cmp = static_cast<int>(a->hasAsanUbsan) - static_cast<int>(b->hasAsanUbsan); break;
-                        case 11: cmp = static_cast<int>(a->hasLeakCheck) - static_cast<int>(b->hasLeakCheck); break;
-                        case 12: cmp = static_cast<int>(a->hasStaticAnalysis) - static_cast<int>(b->hasStaticAnalysis); break;
-                        case 13: cmp = static_cast<int>(a->hasStrictWarnings) - static_cast<int>(b->hasStrictWarnings); break;
-                        case 14: cmp = static_cast<int>(a->hasComplexityGuard) - static_cast<int>(b->hasComplexityGuard); break;
-                        case 15: cmp = static_cast<int>(a->hasCycleGuard) - static_cast<int>(b->hasCycleGuard); break;
-                        case 16: cmp = static_cast<int>(a->hasFormatLint) - static_cast<int>(b->hasFormatLint); break;
-                        case 17: cmp = static_cast<int>(a->hasReadme) - static_cast<int>(b->hasReadme); break;
-                        case 18: cmp = static_cast<int>(a->hasCi) - static_cast<int>(b->hasCi); break;
-                        case 19: cmp = static_cast<int>(a->hasTests) - static_cast<int>(b->hasTests); break;
-                        case 20: cmp = a->detectedArtifacts - b->detectedArtifacts; break;
-                        case 21: cmp = static_cast<int>(a->integratedWithLabGestao) - static_cast<int>(b->integratedWithLabGestao); break;
-                        default: cmp = a->name.compare(b->name); break;
-                    }
-                    if (cmp == 0) cmp = a->name.compare(b->name);
-                    if (spec.SortDirection == ImGuiSortDirection_Descending) cmp = -cmp;
-                    return cmp < 0;
-                });
+        const ImGuiTableSortSpecs* sortSpecs = ImGui::TableGetSortSpecs();
+        auto compareEntryByKey = [&](const RepoInventoryEntry* a, const RepoInventoryEntry* b, ImGuiID key) {
+            switch (key) {
+                case kSortRepo: return a->name.compare(b->name);
+                case kSortTotal: return a->scoreTotal - b->scoreTotal;
+                case kSortOper: return a->scoreOperational - b->scoreOperational;
+                case kSortMatur: return a->scoreMaturity - b->scoreMaturity;
+                case kSortConfCfg: return a->scoreReliability - b->scoreReliability;
+                case kSortConfExec: return a->scoreReliabilityExec - b->scoreReliabilityExec;
+                case kSortBuild: return a->buildSystem.compare(b->buildSystem);
+                case kSortAdr: return static_cast<int>(a->hasAdr) - static_cast<int>(b->hasAdr);
+                case kSortDdd: return static_cast<int>(a->hasDdd) - static_cast<int>(b->hasDdd);
+                case kSortDai: return static_cast<int>(a->hasDai) - static_cast<int>(b->hasDai);
+                case kSortGov: return a->governanceSignals - b->governanceSignals;
+                case kSortAsanUb: return static_cast<int>(a->hasAsanUbsan) - static_cast<int>(b->hasAsanUbsan);
+                case kSortLeak: return static_cast<int>(a->hasLeakCheck) - static_cast<int>(b->hasLeakCheck);
+                case kSortStatic: return static_cast<int>(a->hasStaticAnalysis) - static_cast<int>(b->hasStaticAnalysis);
+                case kSortWarn: return static_cast<int>(a->hasStrictWarnings) - static_cast<int>(b->hasStrictWarnings);
+                case kSortComplex: return static_cast<int>(a->hasComplexityGuard) - static_cast<int>(b->hasComplexityGuard);
+                case kSortCycles: return static_cast<int>(a->hasCycleGuard) - static_cast<int>(b->hasCycleGuard);
+                case kSortFormat: return static_cast<int>(a->hasFormatLint) - static_cast<int>(b->hasFormatLint);
+                case kSortReadme: return static_cast<int>(a->hasReadme) - static_cast<int>(b->hasReadme);
+                case kSortCi: return static_cast<int>(a->hasCi) - static_cast<int>(b->hasCi);
+                case kSortTests: return static_cast<int>(a->hasTests) - static_cast<int>(b->hasTests);
+                case kSortArtifacts: return a->detectedArtifacts - b->detectedArtifacts;
+                default: return a->scoreTotal - b->scoreTotal;
             }
+        };
+
+        if (sortSpecs && sortSpecs->SpecsCount > 0) {
+            if (sortSpecs->SpecsDirty) {
+                const ImGuiTableColumnSortSpecs& primary = sortSpecs->Specs[0];
+                switch (primary.ColumnUserID) {
+                    case kSortTotal: m_repoSortMode = 0; break;
+                    case kSortOper: m_repoSortMode = 1; break;
+                    case kSortMatur: m_repoSortMode = 2; break;
+                    case kSortConfCfg: m_repoSortMode = 3; break;
+                    case kSortConfExec: m_repoSortMode = 4; break;
+                    default: break;
+                }
+                m_repoSortDesc = (primary.SortDirection == ImGuiSortDirection_Descending);
+                const_cast<ImGuiTableSortSpecs*>(sortSpecs)->SpecsDirty = false;
+            }
+
+            std::stable_sort(rows.begin(), rows.end(), [&](const RepoInventoryEntry* a, const RepoInventoryEntry* b) {
+                for (int n = 0; n < sortSpecs->SpecsCount; ++n) {
+                    const ImGuiTableColumnSortSpecs& spec = sortSpecs->Specs[n];
+                    int cmp = compareEntryByKey(a, b, spec.ColumnUserID);
+                    if (cmp == 0) continue;
+                    return (spec.SortDirection == ImGuiSortDirection_Ascending) ? (cmp < 0) : (cmp > 0);
+                }
+                return a->name < b->name;
+            });
+        } else {
+            std::stable_sort(rows.begin(), rows.end(), [&](const RepoInventoryEntry* a, const RepoInventoryEntry* b) {
+                int cmp = 0;
+                switch (m_repoSortMode) {
+                    case 0: cmp = a->scoreTotal - b->scoreTotal; break;
+                    case 1: cmp = a->scoreOperational - b->scoreOperational; break;
+                    case 2: cmp = a->scoreMaturity - b->scoreMaturity; break;
+                    case 3: cmp = a->scoreReliability - b->scoreReliability; break;
+                    case 4: cmp = a->scoreReliabilityExec - b->scoreReliabilityExec; break;
+                    default: cmp = a->scoreTotal - b->scoreTotal; break;
+                }
+                if (cmp == 0) cmp = a->name.compare(b->name);
+                if (!m_repoSortDesc) cmp = -cmp;
+                return cmp > 0;
+            });
         }
 
         shown = static_cast<int>(rows.size());
@@ -1612,23 +1740,23 @@ void AppUI::renderInventoryTab() {
             ImGui::TableSetColumnIndex(2); ImGui::Text("%d", item->scoreOperational);
             ImGui::TableSetColumnIndex(3); ImGui::Text("%d", item->scoreMaturity);
             ImGui::TableSetColumnIndex(4); ImGui::Text("%d", item->scoreReliability);
-            ImGui::TableSetColumnIndex(5); ImGui::TextUnformatted(item->buildSystem.c_str());
-            ImGui::TableSetColumnIndex(6); ImGui::TextUnformatted(item->hasAdr ? "OK" : "-");
-            ImGui::TableSetColumnIndex(7); ImGui::TextUnformatted(item->hasDdd ? "OK" : "-");
-            ImGui::TableSetColumnIndex(8); ImGui::TextUnformatted(item->hasDai ? "OK" : "-");
-            ImGui::TableSetColumnIndex(9); ImGui::Text("%d/4", item->governanceSignals);
-            ImGui::TableSetColumnIndex(10); ImGui::TextUnformatted(item->hasAsanUbsan ? "OK" : "-");
-            ImGui::TableSetColumnIndex(11); ImGui::TextUnformatted(item->hasLeakCheck ? "OK" : "-");
-            ImGui::TableSetColumnIndex(12); ImGui::TextUnformatted(item->hasStaticAnalysis ? "OK" : "-");
-            ImGui::TableSetColumnIndex(13); ImGui::TextUnformatted(item->hasStrictWarnings ? "OK" : "-");
-            ImGui::TableSetColumnIndex(14); ImGui::TextUnformatted(item->hasComplexityGuard ? "OK" : "-");
-            ImGui::TableSetColumnIndex(15); ImGui::TextUnformatted(item->hasCycleGuard ? "OK" : "-");
-            ImGui::TableSetColumnIndex(16); ImGui::TextUnformatted(item->hasFormatLint ? "OK" : "-");
-            ImGui::TableSetColumnIndex(17); ImGui::TextUnformatted(item->hasReadme ? "OK" : "-");
-            ImGui::TableSetColumnIndex(18); ImGui::TextUnformatted(item->hasCi ? "OK" : "-");
-            ImGui::TableSetColumnIndex(19); ImGui::TextUnformatted(item->hasTests ? "OK" : "-");
-            ImGui::TableSetColumnIndex(20); ImGui::Text("%d", item->detectedArtifacts);
-            ImGui::TableSetColumnIndex(21); ImGui::TextUnformatted(item->integratedWithLabGestao ? "Sim" : "Nao");
+            ImGui::TableSetColumnIndex(5); ImGui::Text("%d", item->scoreReliabilityExec);
+            ImGui::TableSetColumnIndex(6); ImGui::TextUnformatted(item->buildSystem.c_str());
+            ImGui::TableSetColumnIndex(7); ImGui::TextUnformatted(item->hasAdr ? "OK" : "-");
+            ImGui::TableSetColumnIndex(8); ImGui::TextUnformatted(item->hasDdd ? "OK" : "-");
+            ImGui::TableSetColumnIndex(9); ImGui::TextUnformatted(item->hasDai ? "OK" : "-");
+            ImGui::TableSetColumnIndex(10); ImGui::Text("%d/4", item->governanceSignals);
+            ImGui::TableSetColumnIndex(11); ImGui::TextUnformatted(item->hasAsanUbsan ? "OK" : "-");
+            ImGui::TableSetColumnIndex(12); ImGui::TextUnformatted(item->hasLeakCheck ? "OK" : "-");
+            ImGui::TableSetColumnIndex(13); ImGui::TextUnformatted(item->hasStaticAnalysis ? "OK" : "-");
+            ImGui::TableSetColumnIndex(14); ImGui::TextUnformatted(item->hasStrictWarnings ? "OK" : "-");
+            ImGui::TableSetColumnIndex(15); ImGui::TextUnformatted(item->hasComplexityGuard ? "OK" : "-");
+            ImGui::TableSetColumnIndex(16); ImGui::TextUnformatted(item->hasCycleGuard ? "OK" : "-");
+            ImGui::TableSetColumnIndex(17); ImGui::TextUnformatted(item->hasFormatLint ? "OK" : "-");
+            ImGui::TableSetColumnIndex(18); ImGui::TextUnformatted(item->hasReadme ? "OK" : "-");
+            ImGui::TableSetColumnIndex(19); ImGui::TextUnformatted(item->hasCi ? "OK" : "-");
+            ImGui::TableSetColumnIndex(20); ImGui::TextUnformatted(item->hasTests ? "OK" : "-");
+            ImGui::TableSetColumnIndex(21); ImGui::Text("%d", item->detectedArtifacts);
         }
         ImGui::EndTable();
     }
@@ -1657,7 +1785,8 @@ void AppUI::renderInventoryTab() {
             ImGui::Text("Total: %d", selected->scoreTotal);
             ImGui::Text("Operacional: %d", selected->scoreOperational);
             ImGui::Text("Maturidade: %d", selected->scoreMaturity);
-            ImGui::Text("Confiabilidade: %d", selected->scoreReliability);
+            ImGui::Text("Confiab (Config): %d", selected->scoreReliability);
+            ImGui::Text("Confiab (Exec): %d", selected->scoreReliabilityExec);
             ImGui::Text("Build: %s", selected->buildSystem.c_str());
             ImGui::Text("Artefatos: %d", selected->detectedArtifacts);
             ImGui::Text("Integrado: %s", selected->integratedWithLabGestao ? "Sim" : "Nao");
@@ -1676,6 +1805,15 @@ void AppUI::renderInventoryTab() {
             ImGui::BulletText("Complexidade guard: %s", selected->hasComplexityGuard ? "OK" : "-");
             ImGui::BulletText("Cycle guard: %s", selected->hasCycleGuard ? "OK" : "-");
             ImGui::BulletText("Format/lint: %s", selected->hasFormatLint ? "OK" : "-");
+            ImGui::Separator();
+            ImGui::TextDisabled("Confiabilidade (Exec no CI)");
+            ImGui::BulletText("ASan/UBSan exec: %s", selected->hasAsanUbsanExec ? "OK" : "-");
+            ImGui::BulletText("Leak check exec: %s", selected->hasLeakCheckExec ? "OK" : "-");
+            ImGui::BulletText("Static analysis exec: %s", selected->hasStaticAnalysisExec ? "OK" : "-");
+            ImGui::BulletText("Warnings estritos exec: %s", selected->hasStrictWarningsExec ? "OK" : "-");
+            ImGui::BulletText("Complexidade exec: %s", selected->hasComplexityGuardExec ? "OK" : "-");
+            ImGui::BulletText("Cycle guard exec: %s", selected->hasCycleGuardExec ? "OK" : "-");
+            ImGui::BulletText("Format/lint exec: %s", selected->hasFormatLintExec ? "OK" : "-");
             ImGui::Separator();
             ImGui::TextDisabled("Diagnostico");
             if (selected->scoreTotal >= 80) ImGui::TextWrapped("Projeto em zona saudavel. Prioridade: manter padroes e monitorar regressao.");
@@ -1706,8 +1844,8 @@ void AppUI::renderInventoryTab() {
     ImGui::TextDisabled("Repos exibidos: %d / %zu", shown, m_repoInventory.size());
     ImGui::TextDisabled("Operacional: README(20)+CI(20)+Testes(15)+Build(20)+Gitignore(10)+License(5)+SemArtefatos(10)");
     ImGui::TextDisabled("Maturidade: ADR(25)+DDD(25)+DAI(25)+Governanca(0..25 via 0..4 sinais)");
-    ImGui::TextDisabled("Confiabilidade: ASan/UBSan(15)+Leak(10)+Static(20)+Warnings(15)+Complex(15)+Cycles(10)+Format(15)");
-    ImGui::TextDisabled("Total: Operacional*0.50 + Maturidade*0.30 + Confiabilidade*0.20");
+    ImGui::TextDisabled("Confiabilidade (Config/Exec): ASan/UBSan(15)+Leak(10)+Static(20)+Warnings(15)+Complex(15)+Cycles(10)+Format(15)");
+    ImGui::TextDisabled("Total: Operacional*0.45 + Maturidade*0.30 + ConfiabCfg*0.15 + ConfiabExec*0.10");
 }
 
 std::vector<std::string> AppUI::generateActionPlanForRepo(const RepoInventoryEntry& repo) const {
@@ -1758,7 +1896,7 @@ bool AppUI::exportInventoryCsv(std::string* outputPath, std::string* errorMsg) c
         return false;
     }
 
-    out << "repo,path,score_total,score_operational,score_maturity,score_reliability,build,adr,ddd,dai,governance_signals,asan_ubsan,leak_check,static_analysis,strict_warnings,complexity_guard,cycle_guard,format_lint,readme,ci,tests,gitignore,license,artifacts,integrated\n";
+    out << "repo,path,score_total,score_operational,score_maturity,score_reliability_config,score_reliability_exec,build,adr,ddd,dai,governance_signals,asan_ubsan_cfg,leak_check_cfg,static_analysis_cfg,strict_warnings_cfg,complexity_guard_cfg,cycle_guard_cfg,format_lint_cfg,asan_ubsan_exec,leak_check_exec,static_analysis_exec,strict_warnings_exec,complexity_guard_exec,cycle_guard_exec,format_lint_exec,readme,ci,tests,gitignore,license,artifacts,integrated\n";
     for (const auto& item : m_repoInventory) {
         out << escapeCsvField(item.name) << ","
             << escapeCsvField(item.path) << ","
@@ -1766,6 +1904,7 @@ bool AppUI::exportInventoryCsv(std::string* outputPath, std::string* errorMsg) c
             << item.scoreOperational << ","
             << item.scoreMaturity << ","
             << item.scoreReliability << ","
+            << item.scoreReliabilityExec << ","
             << escapeCsvField(item.buildSystem) << ","
             << (item.hasAdr ? "1" : "0") << ","
             << (item.hasDdd ? "1" : "0") << ","
@@ -1778,6 +1917,13 @@ bool AppUI::exportInventoryCsv(std::string* outputPath, std::string* errorMsg) c
             << (item.hasComplexityGuard ? "1" : "0") << ","
             << (item.hasCycleGuard ? "1" : "0") << ","
             << (item.hasFormatLint ? "1" : "0") << ","
+            << (item.hasAsanUbsanExec ? "1" : "0") << ","
+            << (item.hasLeakCheckExec ? "1" : "0") << ","
+            << (item.hasStaticAnalysisExec ? "1" : "0") << ","
+            << (item.hasStrictWarningsExec ? "1" : "0") << ","
+            << (item.hasComplexityGuardExec ? "1" : "0") << ","
+            << (item.hasCycleGuardExec ? "1" : "0") << ","
+            << (item.hasFormatLintExec ? "1" : "0") << ","
             << (item.hasReadme ? "1" : "0") << ","
             << (item.hasCi ? "1" : "0") << ","
             << (item.hasTests ? "1" : "0") << ","
@@ -1818,19 +1964,27 @@ bool AppUI::exportInventoryJson(std::string* outputPath, std::string* errorMsg) 
             {"score_total", item.scoreTotal},
             {"score_operational", item.scoreOperational},
             {"score_maturity", item.scoreMaturity},
-            {"score_reliability", item.scoreReliability},
+            {"score_reliability_config", item.scoreReliability},
+            {"score_reliability_exec", item.scoreReliabilityExec},
             {"build", item.buildSystem},
             {"adr", item.hasAdr},
             {"ddd", item.hasDdd},
             {"dai", item.hasDai},
             {"governance_signals", item.governanceSignals},
-            {"asan_ubsan", item.hasAsanUbsan},
-            {"leak_check", item.hasLeakCheck},
-            {"static_analysis", item.hasStaticAnalysis},
-            {"strict_warnings", item.hasStrictWarnings},
-            {"complexity_guard", item.hasComplexityGuard},
-            {"cycle_guard", item.hasCycleGuard},
-            {"format_lint", item.hasFormatLint},
+            {"asan_ubsan_cfg", item.hasAsanUbsan},
+            {"leak_check_cfg", item.hasLeakCheck},
+            {"static_analysis_cfg", item.hasStaticAnalysis},
+            {"strict_warnings_cfg", item.hasStrictWarnings},
+            {"complexity_guard_cfg", item.hasComplexityGuard},
+            {"cycle_guard_cfg", item.hasCycleGuard},
+            {"format_lint_cfg", item.hasFormatLint},
+            {"asan_ubsan_exec", item.hasAsanUbsanExec},
+            {"leak_check_exec", item.hasLeakCheckExec},
+            {"static_analysis_exec", item.hasStaticAnalysisExec},
+            {"strict_warnings_exec", item.hasStrictWarningsExec},
+            {"complexity_guard_exec", item.hasComplexityGuardExec},
+            {"cycle_guard_exec", item.hasCycleGuardExec},
+            {"format_lint_exec", item.hasFormatLintExec},
             {"readme", item.hasReadme},
             {"ci", item.hasCi},
             {"tests", item.hasTests},
