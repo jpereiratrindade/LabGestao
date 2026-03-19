@@ -1,7 +1,9 @@
 #include "domain/ProjectScaffold.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -60,6 +62,73 @@ bool writeTextFile(const fs::path& path, const std::string& contents, std::strin
         return false;
     }
     return true;
+}
+
+std::string shellQuote(const std::string& value) {
+    std::string quoted = "'";
+    for (char ch : value) {
+        if (ch == '\'') {
+            quoted += "'\\''";
+            continue;
+        }
+        quoted.push_back(ch);
+    }
+    quoted += "'";
+    return quoted;
+}
+
+fs::path resolveGovernanceScript(std::string* err) {
+    if (const char* overridePath = std::getenv("LABGESTAO_AI_GOV_SCRIPT")) {
+        const fs::path overrideCandidate = fs::path(overridePath);
+        if (fs::exists(overrideCandidate) && fs::is_regular_file(overrideCandidate)) {
+            return overrideCandidate;
+        }
+        if (err) *err = "script configurado em LABGESTAO_AI_GOV_SCRIPT nao foi encontrado";
+        return {};
+    }
+
+    const fs::path cwd = fs::current_path();
+    const std::array<fs::path, 5> candidates = {
+        cwd / "init_ai_governance.sh",
+        cwd / "../init_ai_governance.sh",
+        cwd / "../../init_ai_governance.sh",
+        cwd / "../../../init_ai_governance.sh",
+        cwd / "../../../../init_ai_governance.sh"
+    };
+
+    for (const auto& candidate : candidates) {
+        std::error_code ec;
+        const fs::path normalized = fs::weakly_canonical(candidate, ec);
+        if (!ec && fs::exists(normalized) && fs::is_regular_file(normalized)) {
+            return normalized;
+        }
+    }
+
+    if (err) *err = "init_ai_governance.sh nao foi encontrado; defina LABGESTAO_AI_GOV_SCRIPT se necessario";
+    return {};
+}
+
+ScaffoldResult createGovernedCppProject(const fs::path& projectDir) {
+    ScaffoldResult result;
+
+    std::string err;
+    const fs::path scriptPath = resolveGovernanceScript(&err);
+    if (scriptPath.empty()) {
+        result.message = err;
+        return result;
+    }
+
+    const std::string command = "bash " + shellQuote(scriptPath.string()) + " " + shellQuote(projectDir.string());
+    const int rc = std::system(command.c_str());
+    if (rc != 0) {
+        result.message = "script de bootstrap governado falhou com codigo " + std::to_string(rc);
+        return result;
+    }
+
+    result.ok = true;
+    result.projectDir = projectDir.string();
+    result.message = "projeto governado criado com sucesso";
+    return result;
 }
 
 std::string cppReadme(const std::string& projectName) {
@@ -152,6 +221,7 @@ std::string projectTemplateLabel(ProjectTemplate templ) {
     switch (templ) {
         case ProjectTemplate::Cpp: return "C++";
         case ProjectTemplate::Python: return "Python";
+        case ProjectTemplate::GovernedCpp: return "C++ Governado";
         case ProjectTemplate::None: break;
     }
     return "Nenhum";
@@ -192,15 +262,19 @@ ScaffoldResult createProjectScaffold(const ScaffoldRequest& req) {
         result.message = "diretorio de projeto ja existe: " + projectDir.string();
         return result;
     }
+    std::string err;
+    const std::string projectSlug = slugify(projectName, false);
+    const std::string packageName = slugify(projectName, true);
+
+    if (req.templ == ProjectTemplate::GovernedCpp) {
+        return createGovernedCppProject(projectDir);
+    }
+
     fs::create_directories(projectDir, ec);
     if (ec) {
         result.message = "falha ao criar diretorio do projeto";
         return result;
     }
-
-    std::string err;
-    const std::string projectSlug = slugify(projectName, false);
-    const std::string packageName = slugify(projectName, true);
 
     if (req.templ == ProjectTemplate::Cpp) {
         fs::create_directories(projectDir / "src", ec);

@@ -61,7 +61,9 @@ void ListView::resetCreateForm() {
     m_formTags[0] = '\0';
     m_formStatus = 0;
     m_createOnDisk = true;
-    if (m_createTemplate == static_cast<int>(ProjectTemplate::Cpp) && !m_creationDefaults.cppRoot.empty()) {
+    if ((m_createTemplate == static_cast<int>(ProjectTemplate::Cpp) ||
+         m_createTemplate == static_cast<int>(ProjectTemplate::GovernedCpp)) &&
+        !m_creationDefaults.cppRoot.empty()) {
         std::snprintf(m_scaffoldBaseDir, sizeof(m_scaffoldBaseDir), "%s", m_creationDefaults.cppRoot.c_str());
     } else if (m_createTemplate == static_cast<int>(ProjectTemplate::Python) && !m_creationDefaults.pythonRoot.empty()) {
         std::snprintf(m_scaffoldBaseDir, sizeof(m_scaffoldBaseDir), "%s", m_creationDefaults.pythonRoot.c_str());
@@ -699,7 +701,8 @@ void ListView::renderCreateModal() {
     static const ProjectTemplate kTemplates[] = {
         ProjectTemplate::None,
         ProjectTemplate::Cpp,
-        ProjectTemplate::Python
+        ProjectTemplate::Python,
+        ProjectTemplate::GovernedCpp
     };
 
     ImGui::OpenPopup("Novo Projeto");
@@ -716,11 +719,13 @@ void ListView::renderCreateModal() {
         const ProjectTemplate selectedTemplate = kTemplates[m_createTemplate];
         ImGui::SetNextItemWidth(200.f);
         if (ImGui::BeginCombo("Template", projectTemplateLabel(selectedTemplate).c_str())) {
-            for (int i = 0; i < 3; i++) {
+            for (int i = 0; i < static_cast<int>(sizeof(kTemplates) / sizeof(kTemplates[0])); i++) {
                 const bool selected = (m_createTemplate == i);
                 if (ImGui::Selectable(projectTemplateLabel(kTemplates[i]).c_str(), selected)) {
                     m_createTemplate = i;
-                    if (kTemplates[i] == ProjectTemplate::Cpp && !m_creationDefaults.cppRoot.empty()) {
+                    if ((kTemplates[i] == ProjectTemplate::Cpp ||
+                         kTemplates[i] == ProjectTemplate::GovernedCpp) &&
+                        !m_creationDefaults.cppRoot.empty()) {
                         std::snprintf(m_scaffoldBaseDir, sizeof(m_scaffoldBaseDir), "%s", m_creationDefaults.cppRoot.c_str());
                     }
                     if (kTemplates[i] == ProjectTemplate::Python && !m_creationDefaults.pythonRoot.empty()) {
@@ -731,11 +736,16 @@ void ListView::renderCreateModal() {
             ImGui::EndCombo();
         }
 
-        if (selectedTemplate == ProjectTemplate::Cpp || selectedTemplate == ProjectTemplate::Python) {
+        if (selectedTemplate == ProjectTemplate::Cpp ||
+            selectedTemplate == ProjectTemplate::Python ||
+            selectedTemplate == ProjectTemplate::GovernedCpp) {
             ImGui::Checkbox("Criar estrutura base no disco", &m_createOnDisk);
             if (m_createOnDisk) {
                 ImGui::SetNextItemWidth(340.f);
                 ImGui::InputTextWithHint("##base_dir", "Diretorio base", m_scaffoldBaseDir, sizeof(m_scaffoldBaseDir));
+                if (selectedTemplate == ProjectTemplate::GovernedCpp) {
+                    ImGui::TextDisabled("Usa o script canônico init_ai_governance.sh para gerar o bootstrap.");
+                }
             }
         } else {
             m_createOnDisk = false;
@@ -768,6 +778,9 @@ void ListView::renderCreateModal() {
             } else if (selectedTemplate == ProjectTemplate::Python) {
                 if (p.category.empty()) p.category = "Python";
                 if (p.tags.empty()) p.tags = {"Python", "Template"};
+            } else if (selectedTemplate == ProjectTemplate::GovernedCpp) {
+                if (p.category.empty()) p.category = "C++ Governado";
+                if (p.tags.empty()) p.tags = {"C++", "Governanca", "Template"};
             }
 
             if (m_createOnDisk && selectedTemplate != ProjectTemplate::None) {

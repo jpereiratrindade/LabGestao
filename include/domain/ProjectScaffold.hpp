@@ -7,7 +7,8 @@ namespace labgestao {
 enum class ProjectTemplate {
     None = 0,
     Cpp,
-    Python
+    Python,
+    GovernedCpp
 };
 
 struct ScaffoldRequest {
@@ -26,4 +27,3 @@ ScaffoldResult createProjectScaffold(const ScaffoldRequest& req);
 std::string projectTemplateLabel(ProjectTemplate templ);
 
 } // namespace labgestao
-
