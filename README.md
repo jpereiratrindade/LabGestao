@@ -75,7 +75,7 @@ Estrutura minima gerada:
 
 Pipeline de CI via GitHub Actions em `.github/workflows/ci.yml`:
 
-- dispara em `push` para `master/main` e em `pull_request`
+- dispara em `push` para `main` e em `pull_request`
 - valida configuracao CMake + build com Ninja em Ubuntu
 - executa `ctest` automaticamente quando houver testes configurados
 
