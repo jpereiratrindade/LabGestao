@@ -472,14 +472,20 @@ bool hasAdrEvidence(const fs::path& root) {
 }
 
 bool hasDddEvidence(const fs::path& root) {
-    if (fs::exists(root / "docs" / "ddd")) return true;
-    if (fs::exists(root / "docs" / "domain")) return true;
-    if (fs::exists(root / "docs" / "architecture")) return true;
+    std::error_code ec;
+    if (fs::exists(root / "ddd", ec) && fs::is_directory(root / "ddd", ec)) return true;
+    if (fs::exists(root / "domain", ec) && fs::is_directory(root / "domain", ec)) return true;
+    if (fs::exists(root / "architecture", ec) && fs::is_directory(root / "architecture", ec)) return true;
+    if (fs::exists(root / "docs" / "ddd", ec) && fs::is_directory(root / "docs" / "ddd", ec)) return true;
+    if (fs::exists(root / "docs" / "domain", ec) && fs::is_directory(root / "docs" / "domain", ec)) return true;
+    if (fs::exists(root / "docs" / "architecture", ec) && fs::is_directory(root / "docs" / "architecture", ec)) return true;
+    if (hasFileNameToken(root, {"ddd", "domain-model", "context-map", "bounded-context"}, 4)) return true;
     return hasFileNameToken(root / "docs", {"ddd", "domain-model", "context-map", "bounded-context"}, 4);
 }
 
 bool hasDaiEvidence(const fs::path& root) {
     std::error_code ec;
+    if (fs::exists(root / "dai", ec) && fs::is_directory(root / "dai", ec)) return true;
     if (fs::exists(root / "docs" / "dai", ec) && fs::is_directory(root / "docs" / "dai", ec)) return true;
     return hasFileNameToken(root, {"dai"}, 3);
 }
