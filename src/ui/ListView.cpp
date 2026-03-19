@@ -72,6 +72,12 @@ void ListView::requestCreateProject() {
     resetCreateForm();
 }
 
+std::string ListView::takeLastCreatedProjectId() {
+    std::string out = m_lastCreatedProjectId;
+    m_lastCreatedProjectId.clear();
+    return out;
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 static void badgeStatus(ProjectStatus s) {
     int idx = static_cast<int>(s);
@@ -735,6 +741,8 @@ void ListView::renderCreateModal() {
             m_createOnDisk = false;
         }
 
+        ImGui::Checkbox("Abrir aba de planejamento apos criar", &m_openPlanningAfterCreate);
+
         if (!m_formError.empty()) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.45f, 0.45f, 1.f));
             ImGui::TextWrapped("%s", m_formError.c_str());
@@ -788,7 +796,12 @@ void ListView::renderCreateModal() {
             if (p.status != ProjectStatus::Backlog) {
                 m_store.recordStatusChange(p, ProjectStatus::Backlog, p.status);
             }
+            const std::string createdId = p.id;
             m_store.add(std::move(p));
+            m_selectedId = createdId;
+            if (m_openPlanningAfterCreate) {
+                m_lastCreatedProjectId = createdId;
+            }
             m_showCreate = false;
             m_formError.clear();
             ImGui::CloseCurrentPopup();

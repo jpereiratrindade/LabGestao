@@ -705,6 +705,17 @@ void AppUI::render() {
             }
             ImGui::Spacing();
             m_list.render();
+            if (const std::string createdId = m_list.takeLastCreatedProjectId(); !createdId.empty()) {
+                m_planningProjectId = createdId;
+                m_focusPlanningTab = true;
+            }
+            ImGui::EndTabItem();
+        }
+        ImGuiTabItemFlags planningTabFlags = m_focusPlanningTab ? ImGuiTabItemFlags_SetSelected : ImGuiTabItemFlags_None;
+        m_focusPlanningTab = false;
+        if (ImGui::BeginTabItem("  [Planejamento]  ", nullptr, planningTabFlags)) {
+            ImGui::Spacing();
+            renderPlanningTab();
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("  [Kanban]  ")) {
@@ -951,6 +962,151 @@ void AppUI::reclassifyKanbanAuto() {
         << result.unchanged << " sem mudanca, "
         << result.skipped << " ignorado(s).";
     m_toolsMessage = msg.str();
+}
+
+void AppUI::renderPlanningTab() {
+    if (m_store.getAll().empty()) {
+        ImGui::TextDisabled("Nenhum projeto cadastrado ainda.");
+        ImGui::TextDisabled("Crie um projeto na aba [Projetos] para iniciar o planejamento.");
+        return;
+    }
+
+    auto pickNewestProjectId = [&]() -> std::string {
+        const auto& all = m_store.getAll();
+        if (all.empty()) return {};
+        const Project* best = &all.front();
+        for (const auto& p : all) {
+            if (p.created_at > best->created_at) {
+                best = &p;
+                continue;
+            }
+            if (p.created_at == best->created_at && p.name > best->name) {
+                best = &p;
+            }
+        }
+        return best->id;
+    };
+
+    bool validSelection = false;
+    if (!m_planningProjectId.empty()) {
+        validSelection = m_store.findById(m_planningProjectId).has_value();
+    }
+    if (!validSelection) {
+        m_planningProjectId = pickNewestProjectId();
+    }
+
+    std::string comboLabel = "Selecione um projeto...";
+    if (auto opt = m_store.findById(m_planningProjectId); opt) {
+        comboLabel = (*opt)->name + " (" + (*opt)->created_at + ")";
+    }
+
+    ImGui::SetNextItemWidth(420.f);
+    if (ImGui::BeginCombo("Projeto em planejamento", comboLabel.c_str())) {
+        for (const auto& p : m_store.getAll()) {
+            const bool selected = (p.id == m_planningProjectId);
+            std::string label = p.name + " (" + p.created_at + ")";
+            if (ImGui::Selectable(label.c_str(), selected)) {
+                m_planningProjectId = p.id;
+            }
+            if (selected) ImGui::SetItemDefaultFocus();
+        }
+        ImGui::EndCombo();
+    }
+
+    auto selected = m_store.findById(m_planningProjectId);
+    if (!selected || !(*selected)) {
+        ImGui::TextDisabled("Projeto selecionado nao encontrado.");
+        return;
+    }
+    Project* current = *selected;
+
+    ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.f, 1.f), "Projeto: %s", current->name.c_str());
+    ImGui::TextDisabled("Categoria: %s | Status: %s", current->category.c_str(), statusToString(current->status).c_str());
+    ImGui::TextDisabled("Criado em: %s", current->created_at.c_str());
+    ImGui::Separator();
+
+    ImGui::TextWrapped("%s", current->description.empty() ? "Sem descricao inicial." : current->description.c_str());
+    if (!current->tags.empty()) {
+        ImGui::Spacing();
+        ImGui::TextDisabled("Tags:");
+        for (const auto& tag : current->tags) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("[%s]", tag.c_str());
+        }
+    }
+
+    ImGui::Spacing();
+    if (ImGui::Button("Gerar backlog semente")) {
+        std::vector<std::string> defaults = {
+            "Configurar pipeline CI",
+            "Criar base de testes automatizados",
+            "Adicionar static analysis e lint",
+            "Definir primeiros ADRs"
+        };
+        int added = 0;
+        for (const auto& title : defaults) {
+            bool exists = false;
+            for (const auto& dai : current->dais) {
+                if (dai.title == title) {
+                    exists = true;
+                    break;
+                }
+            }
+            if (exists) continue;
+
+            Project::DaiEntry dai;
+            dai.id = ProjectStore::generateId();
+            dai.kind = "Action";
+            dai.title = title;
+            dai.owner = "";
+            dai.notes = "Gerado automaticamente no kick-off de planejamento.";
+            dai.opened_at = todayISO();
+            dai.due_at = "";
+            dai.closed = false;
+            dai.closed_at = "";
+            current->dais.push_back(std::move(dai));
+            added++;
+        }
+        m_store.update(*current);
+        m_toolsMessage = added > 0
+            ? ("Backlog semente criado (" + std::to_string(added) + " item(ns)).")
+            : "Backlog semente ja existente.";
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Adicionar ADR inicial")) {
+        bool hasKickoffAdr = false;
+        for (const auto& adr : current->adrs) {
+            if (adr.title == "ADR: Direcao Inicial do Projeto") {
+                hasKickoffAdr = true;
+                break;
+            }
+        }
+        if (!hasKickoffAdr) {
+            Project::AdrEntry adr;
+            adr.id = ProjectStore::generateId();
+            adr.title = "ADR: Direcao Inicial do Projeto";
+            adr.context = "Criacao do projeto com definicao de escopo inicial.";
+            adr.decision = "Adotar kickoff leve com backlog semente e governanca basica.";
+            adr.consequences = "Maior previsibilidade nas primeiras entregas.";
+            adr.created_at = todayISO();
+            current->adrs.push_back(std::move(adr));
+            m_store.update(*current);
+            m_toolsMessage = "ADR inicial adicionado.";
+        } else {
+            m_toolsMessage = "ADR inicial ja existe.";
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Continuar em Projetos")) {
+        m_focusProjectsTab = true;
+    }
+
+    ImGui::Spacing();
+    ImGui::SeparatorText("Checkpoints de Planejamento");
+    ImGui::BulletText("Escopo inicial registrado na descricao");
+    ImGui::BulletText("Backlog semente com acoes tecnicas");
+    ImGui::BulletText("ADR inicial de direcao");
+    ImGui::BulletText("Pronto para detalhamento na aba [Projetos]");
 }
 
 void AppUI::renderFlowMetricsTab() {

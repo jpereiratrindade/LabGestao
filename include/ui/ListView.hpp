@@ -14,6 +14,7 @@ public:
     explicit ListView(ProjectStore& store, CreationDefaults defaults = {});
     void render();
     void requestCreateProject();
+    std::string takeLastCreatedProjectId();
 
 private:
     void resetCreateForm();
@@ -46,8 +47,10 @@ private:
     std::string m_formError;
     int   m_createTemplate{static_cast<int>(ProjectTemplate::Cpp)};
     bool  m_createOnDisk{true};
+    bool  m_openPlanningAfterCreate{true};
     char  m_scaffoldBaseDir[512]{};
     CreationDefaults m_creationDefaults;
+    std::string m_lastCreatedProjectId;
 
     // ADR form
     char  m_adrTitle[256]{};

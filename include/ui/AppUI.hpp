@@ -60,6 +60,7 @@ private:
 
     void applyTheme();
     void reclassifyKanbanAuto();
+    void renderPlanningTab();
     void renderFlowMetricsTab();
     void renderInventoryTab();
     void scanWorkspaceInventory();
@@ -83,6 +84,8 @@ private:
     std::vector<std::string> m_metricsTopCriticalPlan;
     std::string   m_toolsMessage;
     bool          m_focusProjectsTab{false};
+    bool          m_focusPlanningTab{false};
+    std::string   m_planningProjectId;
     bool          m_requestCreateFromTools{false};
     bool          m_showClearProjectsConfirm{false};
     bool          m_showWorkspaceModal{false};
