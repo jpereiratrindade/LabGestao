@@ -516,6 +516,56 @@ int computeCompositeScore(int operationalScore, int maturityScore, int reliabili
     return std::clamp(static_cast<int>(std::lround(weighted)), 0, 100);
 }
 
+int computeEngineeringDisciplineScore(
+    int operationalScore,
+    int maturityScore,
+    int reliabilityConfigScore,
+    int reliabilityExecScore,
+    bool hasAdr,
+    bool hasDdd,
+    bool hasDai,
+    int governanceSignals,
+    int detectedArtifacts
+) {
+    double score = static_cast<double>(operationalScore) * 0.20
+                 + static_cast<double>(maturityScore) * 0.35
+                 + static_cast<double>(reliabilityConfigScore) * 0.25
+                 + static_cast<double>(reliabilityExecScore) * 0.20;
+    if (hasAdr) score += 3.0;
+    if (hasDdd) score += 3.0;
+    if (hasDai) score += 2.0;
+    score += static_cast<double>(std::clamp(governanceSignals, 0, 4));
+    score -= static_cast<double>(std::min(detectedArtifacts, 20)) * 0.5;
+    return std::clamp(static_cast<int>(std::lround(score)), 0, 100);
+}
+
+int computeVibeRiskScore(
+    int engineeringDisciplineScore,
+    bool hasAdr,
+    bool hasDdd,
+    bool hasDai,
+    int governanceSignals,
+    bool hasCi,
+    bool hasTests,
+    bool hasStrictWarnings,
+    bool hasComplexityGuard,
+    bool hasCycleGuard,
+    int detectedArtifacts
+) {
+    int risk = 100 - engineeringDisciplineScore;
+    if (!hasAdr) risk += 8;
+    if (!hasDdd) risk += 10;
+    if (!hasDai) risk += 6;
+    if (governanceSignals == 0) risk += 8;
+    if (!hasCi) risk += 8;
+    if (!hasTests) risk += 10;
+    if (!hasStrictWarnings) risk += 5;
+    if (!hasComplexityGuard) risk += 7;
+    if (!hasCycleGuard) risk += 5;
+    risk += std::min(detectedArtifacts, 15);
+    return std::clamp(risk, 0, 100);
+}
+
 std::string escapeCsvField(const std::string& value) {
     std::string out = "\"";
     out.reserve(value.size() + 2);
@@ -1545,6 +1595,30 @@ void AppUI::scanWorkspaceInventory() {
             item.hasCycleGuardExec,
             item.hasFormatLintExec
         );
+        item.scoreEngineeringDiscipline = computeEngineeringDisciplineScore(
+            item.scoreOperational,
+            item.scoreMaturity,
+            item.scoreReliability,
+            item.scoreReliabilityExec,
+            item.hasAdr,
+            item.hasDdd,
+            item.hasDai,
+            item.governanceSignals,
+            item.detectedArtifacts
+        );
+        item.scoreVibeRisk = computeVibeRiskScore(
+            item.scoreEngineeringDiscipline,
+            item.hasAdr,
+            item.hasDdd,
+            item.hasDai,
+            item.governanceSignals,
+            item.hasCi,
+            item.hasTests,
+            item.hasStrictWarnings,
+            item.hasComplexityGuard,
+            item.hasCycleGuard,
+            item.detectedArtifacts
+        );
 
         item.scoreTotal = computeCompositeScore(
             item.scoreOperational,
@@ -1623,10 +1697,10 @@ void AppUI::renderInventoryTab() {
     ImGui::SameLine();
     ImGui::Checkbox("So integrados", &m_repoOnlyIntegrated);
     ImGui::SameLine();
-    static const char* kSortLabels[] = {"Total", "Operacional", "Maturidade", "Confiab(Config)", "Confiab(Exec)"};
+    static const char* kSortLabels[] = {"Total", "Disciplina", "Vibe", "Operacional", "Maturidade", "Confiab(Config)", "Confiab(Exec)"};
     ImGui::SetNextItemWidth(150.f);
     if (ImGui::BeginCombo("Ordenar", kSortLabels[m_repoSortMode])) {
-        for (int i = 0; i < 5; i++) {
+        for (int i = 0; i < 7; i++) {
             if (ImGui::Selectable(kSortLabels[i], m_repoSortMode == i)) m_repoSortMode = i;
         }
         ImGui::EndCombo();
@@ -1660,6 +1734,8 @@ void AppUI::renderInventoryTab() {
     enum InventorySortKey : ImGuiID {
         kSortRepo = 1,
         kSortTotal,
+        kSortDiscipline,
+        kSortVibe,
         kSortOper,
         kSortMatur,
         kSortConfCfg,
@@ -1681,13 +1757,15 @@ void AppUI::renderInventoryTab() {
         kSortTests,
         kSortArtifacts
     };
-    if (ImGui::BeginTable("##repo_inventory", 22,
+    if (ImGui::BeginTable("##repo_inventory", 24,
         ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
         ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp |
         ImGuiTableFlags_Resizable | ImGuiTableFlags_Sortable)) {
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableSetupColumn("Repo",      ImGuiTableColumnFlags_DefaultSort, 2.2f, kSortRepo);
         ImGui::TableSetupColumn("Total(Escore)", 0,                             0.8f, kSortTotal);
+        ImGui::TableSetupColumn("Disc",      0,                                 0.8f, kSortDiscipline);
+        ImGui::TableSetupColumn("Vibe",      0,                                 0.7f, kSortVibe);
         ImGui::TableSetupColumn("Oper",      0,                                 0.8f, kSortOper);
         ImGui::TableSetupColumn("Matur",     0,                                 0.8f, kSortMatur);
         ImGui::TableSetupColumn("ConfCfg",   0,                                 0.8f, kSortConfCfg);
@@ -1715,6 +1793,8 @@ void AppUI::renderInventoryTab() {
             switch (key) {
                 case kSortRepo: return a->name.compare(b->name);
                 case kSortTotal: return a->scoreTotal - b->scoreTotal;
+                case kSortDiscipline: return a->scoreEngineeringDiscipline - b->scoreEngineeringDiscipline;
+                case kSortVibe: return a->scoreVibeRisk - b->scoreVibeRisk;
                 case kSortOper: return a->scoreOperational - b->scoreOperational;
                 case kSortMatur: return a->scoreMaturity - b->scoreMaturity;
                 case kSortConfCfg: return a->scoreReliability - b->scoreReliability;
@@ -1744,10 +1824,12 @@ void AppUI::renderInventoryTab() {
                 const ImGuiTableColumnSortSpecs& primary = sortSpecs->Specs[0];
                 switch (primary.ColumnUserID) {
                     case kSortTotal: m_repoSortMode = 0; break;
-                    case kSortOper: m_repoSortMode = 1; break;
-                    case kSortMatur: m_repoSortMode = 2; break;
-                    case kSortConfCfg: m_repoSortMode = 3; break;
-                    case kSortConfExec: m_repoSortMode = 4; break;
+                    case kSortDiscipline: m_repoSortMode = 1; break;
+                    case kSortVibe: m_repoSortMode = 2; break;
+                    case kSortOper: m_repoSortMode = 3; break;
+                    case kSortMatur: m_repoSortMode = 4; break;
+                    case kSortConfCfg: m_repoSortMode = 5; break;
+                    case kSortConfExec: m_repoSortMode = 6; break;
                     default: break;
                 }
                 m_repoSortDesc = (primary.SortDirection == ImGuiSortDirection_Descending);
@@ -1768,10 +1850,12 @@ void AppUI::renderInventoryTab() {
                 int cmp = 0;
                 switch (m_repoSortMode) {
                     case 0: cmp = a->scoreTotal - b->scoreTotal; break;
-                    case 1: cmp = a->scoreOperational - b->scoreOperational; break;
-                    case 2: cmp = a->scoreMaturity - b->scoreMaturity; break;
-                    case 3: cmp = a->scoreReliability - b->scoreReliability; break;
-                    case 4: cmp = a->scoreReliabilityExec - b->scoreReliabilityExec; break;
+                    case 1: cmp = a->scoreEngineeringDiscipline - b->scoreEngineeringDiscipline; break;
+                    case 2: cmp = a->scoreVibeRisk - b->scoreVibeRisk; break;
+                    case 3: cmp = a->scoreOperational - b->scoreOperational; break;
+                    case 4: cmp = a->scoreMaturity - b->scoreMaturity; break;
+                    case 5: cmp = a->scoreReliability - b->scoreReliability; break;
+                    case 6: cmp = a->scoreReliabilityExec - b->scoreReliabilityExec; break;
                     default: cmp = a->scoreTotal - b->scoreTotal; break;
                 }
                 if (cmp == 0) cmp = a->name.compare(b->name);
@@ -1794,26 +1878,28 @@ void AppUI::renderInventoryTab() {
             ImGui::SameLine();
             ImGui::TextUnformatted(item->name.c_str());
             ImGui::TableSetColumnIndex(1); ImGui::Text("%d", item->scoreTotal);
-            ImGui::TableSetColumnIndex(2); ImGui::Text("%d", item->scoreOperational);
-            ImGui::TableSetColumnIndex(3); ImGui::Text("%d", item->scoreMaturity);
-            ImGui::TableSetColumnIndex(4); ImGui::Text("%d", item->scoreReliability);
-            ImGui::TableSetColumnIndex(5); ImGui::Text("%d", item->scoreReliabilityExec);
-            ImGui::TableSetColumnIndex(6); ImGui::TextUnformatted(item->buildSystem.c_str());
-            ImGui::TableSetColumnIndex(7); ImGui::TextUnformatted(item->hasAdr ? "OK" : "-");
-            ImGui::TableSetColumnIndex(8); ImGui::TextUnformatted(item->hasDdd ? "OK" : "-");
-            ImGui::TableSetColumnIndex(9); ImGui::TextUnformatted(item->hasDai ? "OK" : "-");
-            ImGui::TableSetColumnIndex(10); ImGui::Text("%d/4", item->governanceSignals);
-            ImGui::TableSetColumnIndex(11); ImGui::TextUnformatted(item->hasAsanUbsan ? "OK" : "-");
-            ImGui::TableSetColumnIndex(12); ImGui::TextUnformatted(item->hasLeakCheck ? "OK" : "-");
-            ImGui::TableSetColumnIndex(13); ImGui::TextUnformatted(item->hasStaticAnalysis ? "OK" : "-");
-            ImGui::TableSetColumnIndex(14); ImGui::TextUnformatted(item->hasStrictWarnings ? "OK" : "-");
-            ImGui::TableSetColumnIndex(15); ImGui::TextUnformatted(item->hasComplexityGuard ? "OK" : "-");
-            ImGui::TableSetColumnIndex(16); ImGui::TextUnformatted(item->hasCycleGuard ? "OK" : "-");
-            ImGui::TableSetColumnIndex(17); ImGui::TextUnformatted(item->hasFormatLint ? "OK" : "-");
-            ImGui::TableSetColumnIndex(18); ImGui::TextUnformatted(item->hasReadme ? "OK" : "-");
-            ImGui::TableSetColumnIndex(19); ImGui::TextUnformatted(item->hasCi ? "OK" : "-");
-            ImGui::TableSetColumnIndex(20); ImGui::TextUnformatted(item->hasTests ? "OK" : "-");
-            ImGui::TableSetColumnIndex(21); ImGui::Text("%d", item->detectedArtifacts);
+            ImGui::TableSetColumnIndex(2); ImGui::Text("%d", item->scoreEngineeringDiscipline);
+            ImGui::TableSetColumnIndex(3); ImGui::Text("%d", item->scoreVibeRisk);
+            ImGui::TableSetColumnIndex(4); ImGui::Text("%d", item->scoreOperational);
+            ImGui::TableSetColumnIndex(5); ImGui::Text("%d", item->scoreMaturity);
+            ImGui::TableSetColumnIndex(6); ImGui::Text("%d", item->scoreReliability);
+            ImGui::TableSetColumnIndex(7); ImGui::Text("%d", item->scoreReliabilityExec);
+            ImGui::TableSetColumnIndex(8); ImGui::TextUnformatted(item->buildSystem.c_str());
+            ImGui::TableSetColumnIndex(9); ImGui::TextUnformatted(item->hasAdr ? "OK" : "-");
+            ImGui::TableSetColumnIndex(10); ImGui::TextUnformatted(item->hasDdd ? "OK" : "-");
+            ImGui::TableSetColumnIndex(11); ImGui::TextUnformatted(item->hasDai ? "OK" : "-");
+            ImGui::TableSetColumnIndex(12); ImGui::Text("%d/4", item->governanceSignals);
+            ImGui::TableSetColumnIndex(13); ImGui::TextUnformatted(item->hasAsanUbsan ? "OK" : "-");
+            ImGui::TableSetColumnIndex(14); ImGui::TextUnformatted(item->hasLeakCheck ? "OK" : "-");
+            ImGui::TableSetColumnIndex(15); ImGui::TextUnformatted(item->hasStaticAnalysis ? "OK" : "-");
+            ImGui::TableSetColumnIndex(16); ImGui::TextUnformatted(item->hasStrictWarnings ? "OK" : "-");
+            ImGui::TableSetColumnIndex(17); ImGui::TextUnformatted(item->hasComplexityGuard ? "OK" : "-");
+            ImGui::TableSetColumnIndex(18); ImGui::TextUnformatted(item->hasCycleGuard ? "OK" : "-");
+            ImGui::TableSetColumnIndex(19); ImGui::TextUnformatted(item->hasFormatLint ? "OK" : "-");
+            ImGui::TableSetColumnIndex(20); ImGui::TextUnformatted(item->hasReadme ? "OK" : "-");
+            ImGui::TableSetColumnIndex(21); ImGui::TextUnformatted(item->hasCi ? "OK" : "-");
+            ImGui::TableSetColumnIndex(22); ImGui::TextUnformatted(item->hasTests ? "OK" : "-");
+            ImGui::TableSetColumnIndex(23); ImGui::Text("%d", item->detectedArtifacts);
         }
         ImGui::EndTable();
     }
@@ -1840,6 +1926,8 @@ void AppUI::renderInventoryTab() {
             ImGui::TextDisabled("%s", selected->path.c_str());
             ImGui::Separator();
             ImGui::Text("Total: %d", selected->scoreTotal);
+            ImGui::Text("Disciplina: %d", selected->scoreEngineeringDiscipline);
+            ImGui::Text("Vibe Risk: %d", selected->scoreVibeRisk);
             ImGui::Text("Operacional: %d", selected->scoreOperational);
             ImGui::Text("Maturidade: %d", selected->scoreMaturity);
             ImGui::Text("Confiab (Config): %d", selected->scoreReliability);
@@ -1872,10 +1960,20 @@ void AppUI::renderInventoryTab() {
             ImGui::BulletText("Cycle guard exec: %s", selected->hasCycleGuardExec ? "OK" : "-");
             ImGui::BulletText("Format/lint exec: %s", selected->hasFormatLintExec ? "OK" : "-");
             ImGui::Separator();
+            ImGui::TextDisabled("Leitura sintetica");
+            ImGui::BulletText("Engineering Discipline: %s",
+                              selected->scoreEngineeringDiscipline >= 80 ? "alta" :
+                              selected->scoreEngineeringDiscipline >= 60 ? "media" : "baixa");
+            ImGui::BulletText("Vibe Risk: %s",
+                              selected->scoreVibeRisk >= 70 ? "alto" :
+                              selected->scoreVibeRisk >= 40 ? "medio" : "baixo");
+            ImGui::BulletText("Spaghetti Risk (proxy): %s",
+                              (!selected->hasComplexityGuard || !selected->hasCycleGuard || !selected->hasDdd) ? "atencao" : "controlado");
+            ImGui::Separator();
             ImGui::TextDisabled("Diagnostico");
-            if (selected->scoreTotal >= 80) ImGui::TextWrapped("Projeto em zona saudavel. Prioridade: manter padroes e monitorar regressao.");
-            else if (selected->scoreTotal >= 60) ImGui::TextWrapped("Projeto em zona de atencao. Prioridade: subir confiabilidade e governanca.");
-            else if (selected->scoreTotal >= 40) ImGui::TextWrapped("Projeto em risco moderado. Prioridade: CI + testes + checks de confiabilidade.");
+            if (selected->scoreEngineeringDiscipline >= 80 && selected->scoreVibeRisk < 30) ImGui::TextWrapped("Projeto com engenharia deliberada forte. Prioridade: manter padroes, reduzir riscos residuais e evitar regressao.");
+            else if (selected->scoreEngineeringDiscipline >= 60) ImGui::TextWrapped("Projeto em zona de atencao. Prioridade: subir confiabilidade, explicitar arquitetura e reduzir espacos de improviso.");
+            else if (selected->scoreTotal >= 40) ImGui::TextWrapped("Projeto com disciplina insuficiente e risco de vibe coding moderado. Prioridade: CI + testes + ADR/DDD/DAI + guardas de complexidade.");
             else ImGui::TextWrapped("Projeto critico. Prioridade: baseline operacional e eliminacao de riscos tecnicos.");
 
             ImGui::Separator();
@@ -1899,6 +1997,8 @@ void AppUI::renderInventoryTab() {
     }
 
     ImGui::TextDisabled("Repos exibidos: %d / %zu", shown, m_repoInventory.size());
+    ImGui::TextDisabled("Disciplina: leitura sintetica de arquitetura, governanca, confiabilidade e operacao.");
+    ImGui::TextDisabled("Vibe Risk: proxy do quanto o projeto depende de improviso, baixa rastreabilidade e pouca validacao.");
     ImGui::TextDisabled("Operacional: README(20)+CI(20)+Testes(15)+Build(20)+Gitignore(10)+License(5)+SemArtefatos(10)");
     ImGui::TextDisabled("Maturidade: ADR(25)+DDD(25)+DAI(25)+Governanca(0..25 via 0..4 sinais)");
     ImGui::TextDisabled("Confiabilidade (Config/Exec): ASan/UBSan(15)+Leak(10)+Static(20)+Warnings(15)+Complex(15)+Cycles(10)+Format(15)");
@@ -1953,11 +2053,13 @@ bool AppUI::exportInventoryCsv(std::string* outputPath, std::string* errorMsg) c
         return false;
     }
 
-    out << "repo,path,score_total,score_operational,score_maturity,score_reliability_config,score_reliability_exec,build,adr,ddd,dai,governance_signals,asan_ubsan_cfg,leak_check_cfg,static_analysis_cfg,strict_warnings_cfg,complexity_guard_cfg,cycle_guard_cfg,format_lint_cfg,asan_ubsan_exec,leak_check_exec,static_analysis_exec,strict_warnings_exec,complexity_guard_exec,cycle_guard_exec,format_lint_exec,readme,ci,tests,gitignore,license,artifacts,integrated\n";
+    out << "repo,path,score_total,score_engineering_discipline,score_vibe_risk,score_operational,score_maturity,score_reliability_config,score_reliability_exec,build,adr,ddd,dai,governance_signals,asan_ubsan_cfg,leak_check_cfg,static_analysis_cfg,strict_warnings_cfg,complexity_guard_cfg,cycle_guard_cfg,format_lint_cfg,asan_ubsan_exec,leak_check_exec,static_analysis_exec,strict_warnings_exec,complexity_guard_exec,cycle_guard_exec,format_lint_exec,readme,ci,tests,gitignore,license,artifacts,integrated\n";
     for (const auto& item : m_repoInventory) {
         out << escapeCsvField(item.name) << ","
             << escapeCsvField(item.path) << ","
             << item.scoreTotal << ","
+            << item.scoreEngineeringDiscipline << ","
+            << item.scoreVibeRisk << ","
             << item.scoreOperational << ","
             << item.scoreMaturity << ","
             << item.scoreReliability << ","
@@ -2019,6 +2121,8 @@ bool AppUI::exportInventoryJson(std::string* outputPath, std::string* errorMsg) 
             {"repo", item.name},
             {"path", item.path},
             {"score_total", item.scoreTotal},
+            {"score_engineering_discipline", item.scoreEngineeringDiscipline},
+            {"score_vibe_risk", item.scoreVibeRisk},
             {"score_operational", item.scoreOperational},
             {"score_maturity", item.scoreMaturity},
             {"score_reliability_config", item.scoreReliability},

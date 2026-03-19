@@ -29,6 +29,8 @@ private:
         int scoreMaturity{0};    // 0..100
         int scoreReliability{0};     // 0..100 (Config)
         int scoreReliabilityExec{0}; // 0..100 (Exec)
+        int scoreEngineeringDiscipline{0}; // 0..100
+        int scoreVibeRisk{0};              // 0..100
         int scoreTotal{0};       // 0..100 (50/30/20)
         int detectedArtifacts{0};
         bool hasReadme{false};
@@ -95,7 +97,7 @@ private:
     char          m_repoSearchBuf[256]{};
     int           m_repoMinScore{0};
     bool          m_repoOnlyIntegrated{false};
-    int           m_repoSortMode{0}; // 0=Total, 1=Operacional, 2=Maturidade, 3=ConfiabCfg, 4=ConfiabExec
+    int           m_repoSortMode{0}; // 0=Total, 1=Disciplina, 2=Vibe, 3=Operacional, 4=Maturidade, 5=ConfiabCfg, 6=ConfiabExec
     bool          m_repoSortDesc{true};
     std::vector<RepoInventoryEntry> m_repoInventory;
     std::string   m_repoInventoryRoot;
