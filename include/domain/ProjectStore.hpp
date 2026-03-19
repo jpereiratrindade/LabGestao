@@ -1,8 +1,8 @@
 #pragma once
 #include "Project.hpp"
-#include <vector>
-#include <string>
 #include <optional>
+#include <string>
+#include <vector>
 
 namespace labgestao {
 
@@ -38,6 +38,8 @@ public:
     std::vector<Project>& getAll();
     const std::vector<Project>& getAll() const;
     std::optional<Project*> findById(const std::string& id);
+    std::optional<std::string> duplicateSourcePathReason(const Project& candidate) const;
+    std::optional<std::string> duplicateNormalizedNameReason(const Project& candidate) const;
 
     void recordStatusChange(Project& p, ProjectStatus from, ProjectStatus to, const std::string& movedAt = "");
     bool canMoveToStatus(const Project& p, ProjectStatus to, std::string* reason = nullptr) const;

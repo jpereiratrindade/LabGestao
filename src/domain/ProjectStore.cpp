@@ -1,14 +1,17 @@
 #include "domain/ProjectStore.hpp"
 #include "json.hpp"
-#include <fstream>
 #include <algorithm>
+#include <cctype>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <random>
 #include <sstream>
 #include <iomanip>
 #include <ctime>
 
 using json = nlohmann::json;
+namespace fs = std::filesystem;
 
 namespace labgestao {
 
@@ -41,6 +44,45 @@ static float daysDiff(const std::string& from, const std::string& to) {
     return static_cast<float>(b - a);
 }
 
+static std::string trim(const std::string& value) {
+    size_t first = 0;
+    while (first < value.size() && std::isspace(static_cast<unsigned char>(value[first]))) {
+        ++first;
+    }
+    size_t last = value.size();
+    while (last > first && std::isspace(static_cast<unsigned char>(value[last - 1]))) {
+        --last;
+    }
+    return value.substr(first, last - first);
+}
+
+static std::string lowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
+    return value;
+}
+
+static std::string normalizeProjectName(const std::string& value) {
+    return lowerAscii(trim(value));
+}
+
+static std::string canonicalSourcePath(const std::string& rawPath) {
+    if (rawPath.empty()) return {};
+    std::error_code ec;
+    const fs::path canon = fs::weakly_canonical(fs::path(rawPath), ec);
+    if (!ec) return canon.string();
+    const fs::path normalized = fs::path(rawPath).lexically_normal();
+    return normalized.string();
+}
+
+static bool sameCanonicalSourcePath(const std::string& lhs, const std::string& rhs) {
+    const std::string a = canonicalSourcePath(lhs);
+    const std::string b = canonicalSourcePath(rhs);
+    if (a.empty() || b.empty()) return false;
+    return a == b;
+}
+
 // ── ID generation ───────────────────────────────────────────────────────────
 std::string ProjectStore::generateId() {
     static std::mt19937_64 rng{std::random_device{}()};
@@ -52,6 +94,9 @@ std::string ProjectStore::generateId() {
 
 // ── CRUD ─────────────────────────────────────────────────────────────────────
 void ProjectStore::add(Project p) {
+    if (duplicateSourcePathReason(p).has_value()) {
+        return;
+    }
     if (p.id.empty()) p.id = generateId();
     m_projects.push_back(std::move(p));
     m_dirty = true;
@@ -60,6 +105,9 @@ void ProjectStore::add(Project p) {
 void ProjectStore::update(const Project& p) {
     for (auto& proj : m_projects) {
         if (proj.id == p.id) {
+            if (const auto conflict = duplicateSourcePathReason(p); conflict.has_value()) {
+                return;
+            }
             proj = p;
             m_dirty = true;
             return;
@@ -88,6 +136,39 @@ const std::vector<Project>& ProjectStore::getAll() const { return m_projects; }
 std::optional<Project*> ProjectStore::findById(const std::string& id) {
     for (auto& p : m_projects) {
         if (p.id == id) return &p;
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> ProjectStore::duplicateSourcePathReason(const Project& candidate) const {
+    if (candidate.source_path.empty()) return std::nullopt;
+
+    const std::string candidatePath = canonicalSourcePath(candidate.source_path);
+    if (candidatePath.empty()) return std::nullopt;
+
+    for (const auto& existing : m_projects) {
+        if (!existing.id.empty() && existing.id == candidate.id) continue;
+        if (existing.source_path.empty()) continue;
+        if (!sameCanonicalSourcePath(existing.source_path, candidate.source_path)) continue;
+
+        std::ostringstream oss;
+        oss << "source_path duplicado com projeto '" << existing.name << "' (" << existing.id << ")";
+        return oss.str();
+    }
+    return std::nullopt;
+}
+
+std::optional<std::string> ProjectStore::duplicateNormalizedNameReason(const Project& candidate) const {
+    const std::string candidateName = normalizeProjectName(candidate.name);
+    if (candidateName.empty()) return std::nullopt;
+
+    for (const auto& existing : m_projects) {
+        if (!existing.id.empty() && existing.id == candidate.id) continue;
+        if (normalizeProjectName(existing.name) != candidateName) continue;
+
+        std::ostringstream oss;
+        oss << "nome duplicado com projeto '" << existing.name << "' (" << existing.id << ")";
+        return oss.str();
     }
     return std::nullopt;
 }

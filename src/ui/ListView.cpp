@@ -670,6 +670,24 @@ static std::string slugifyProjectName(const std::string& name) {
     return out;
 }
 
+static std::string trimCopy(const std::string& value) {
+    const auto start = value.find_first_not_of(" \t\r\n");
+    if (start == std::string::npos) return {};
+    const auto end = value.find_last_not_of(" \t\r\n");
+    return value.substr(start, end - start + 1);
+}
+
+static std::string previewScaffoldPath(const char* baseDir, const char* projectName) {
+    const std::string base = trimCopy(baseDir ? baseDir : "");
+    const std::string name = trimCopy(projectName ? projectName : "");
+    if (base.empty() || name.empty()) return {};
+
+    const std::string slug = slugifyProjectName(name);
+    if (slug.empty()) return {};
+
+    return (fs::path(base) / slug).string();
+}
+
 static std::string resolveProjectPathForOpen(const Project& p, const ListView::CreationDefaults& defaults) {
     if (!p.source_path.empty() && fs::exists(p.source_path)) return p.source_path;
 
@@ -717,8 +735,8 @@ void ListView::renderCreateModal() {
         ImGui::InputTextMultiline("##desc", m_formDesc, sizeof(m_formDesc), ImVec2(340.f, 100.f));
 
         const ProjectTemplate selectedTemplate = kTemplates[m_createTemplate];
-        ImGui::SetNextItemWidth(200.f);
-        if (ImGui::BeginCombo("Template", projectTemplateLabel(selectedTemplate).c_str())) {
+        ImGui::SetNextItemWidth(240.f);
+        if (ImGui::BeginCombo("Tipo de projeto / bootstrap", projectTemplateLabel(selectedTemplate).c_str())) {
             for (int i = 0; i < static_cast<int>(sizeof(kTemplates) / sizeof(kTemplates[0])); i++) {
                 const bool selected = (m_createTemplate == i);
                 if (ImGui::Selectable(projectTemplateLabel(kTemplates[i]).c_str(), selected)) {
@@ -742,7 +760,15 @@ void ListView::renderCreateModal() {
             ImGui::Checkbox("Criar estrutura base no disco", &m_createOnDisk);
             if (m_createOnDisk) {
                 ImGui::SetNextItemWidth(340.f);
-                ImGui::InputTextWithHint("##base_dir", "Diretorio base", m_scaffoldBaseDir, sizeof(m_scaffoldBaseDir));
+                ImGui::InputTextWithHint("##base_dir", "Diretorio base*", m_scaffoldBaseDir, sizeof(m_scaffoldBaseDir));
+                const std::string previewPath = previewScaffoldPath(m_scaffoldBaseDir, m_formName);
+                if (trimCopy(m_scaffoldBaseDir).empty()) {
+                    ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.45f, 0.45f, 1.f));
+                    ImGui::TextUnformatted("Informe um diretorio base para criar a estrutura no disco.");
+                    ImGui::PopStyleColor();
+                } else if (!previewPath.empty()) {
+                    ImGui::TextDisabled("Diretorio final previsto: %s", previewPath.c_str());
+                }
                 if (selectedTemplate == ProjectTemplate::GovernedCpp) {
                     ImGui::TextDisabled("Usa o script canônico init_ai_governance.sh para gerar o bootstrap.");
                 }
@@ -751,7 +777,26 @@ void ListView::renderCreateModal() {
             m_createOnDisk = false;
         }
 
+        Project draft;
+        draft.id = "__draft__";
+        draft.name = m_formName;
+        if (m_createOnDisk && selectedTemplate != ProjectTemplate::None) {
+            draft.source_path = previewScaffoldPath(m_scaffoldBaseDir, m_formName);
+        }
+
+        const auto duplicateSourceReason = m_store.duplicateSourcePathReason(draft);
+        const auto duplicateNameReason = m_store.duplicateNormalizedNameReason(draft);
+
         ImGui::Checkbox("Abrir aba de planejamento apos criar", &m_openPlanningAfterCreate);
+        ImGui::TextDisabled("Status inicial recomendado: Backlog. A mudanca de status continua manual depois da criacao.");
+        if (duplicateNameReason.has_value()) {
+            ImGui::TextDisabled("Aviso: %s", duplicateNameReason->c_str());
+        }
+        if (duplicateSourceReason.has_value()) {
+            ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.45f, 0.45f, 1.f));
+            ImGui::TextWrapped("Conflito: %s", duplicateSourceReason->c_str());
+            ImGui::PopStyleColor();
+        }
 
         if (!m_formError.empty()) {
             ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(1.f, 0.45f, 0.45f, 1.f));
@@ -760,8 +805,12 @@ void ListView::renderCreateModal() {
         }
 
         ImGui::Separator();
-        bool ok = strlen(m_formName) > 0;
-        if (!ok) ImGui::BeginDisabled();
+        const bool hasName = strlen(m_formName) > 0;
+        const bool needsBaseDir = m_createOnDisk && selectedTemplate != ProjectTemplate::None;
+        const bool hasBaseDir = !trimCopy(m_scaffoldBaseDir).empty();
+        const bool hasDuplicateSource = duplicateSourceReason.has_value();
+        const bool canCreate = hasName && (!needsBaseDir || hasBaseDir) && !hasDuplicateSource;
+        if (!canCreate) ImGui::BeginDisabled();
         if (ImGui::Button("Criar", ImVec2(100.f, 0))) {
             Project p;
             p.id          = ProjectStore::generateId();
@@ -783,6 +832,13 @@ void ListView::renderCreateModal() {
                 if (p.tags.empty()) p.tags = {"C++", "Governanca", "Template"};
             }
 
+            if (duplicateSourceReason.has_value()) {
+                m_formError = "Conflito de cadastro: " + *duplicateSourceReason;
+                if (!canCreate) ImGui::EndDisabled();
+                ImGui::EndPopup();
+                return;
+            }
+
             if (m_createOnDisk && selectedTemplate != ProjectTemplate::None) {
                 ScaffoldRequest req;
                 req.templ = selectedTemplate;
@@ -791,7 +847,7 @@ void ListView::renderCreateModal() {
                 const auto scaffold = createProjectScaffold(req);
                 if (!scaffold.ok) {
                     m_formError = "Falha no scaffold: " + scaffold.message;
-                    if (!ok) ImGui::EndDisabled();
+                    if (!canCreate) ImGui::EndDisabled();
                     ImGui::EndPopup();
                     return;
                 }
@@ -802,7 +858,7 @@ void ListView::renderCreateModal() {
             std::string reason;
             if (!m_store.canMoveToStatus(p, p.status, &reason)) {
                 m_formError = reason.empty() ? "Regra de fluxo violada." : reason;
-                if (!ok) ImGui::EndDisabled();
+                if (!canCreate) ImGui::EndDisabled();
                 ImGui::EndPopup();
                 return;
             }
@@ -819,7 +875,7 @@ void ListView::renderCreateModal() {
             m_formError.clear();
             ImGui::CloseCurrentPopup();
         }
-        if (!ok) ImGui::EndDisabled();
+        if (!canCreate) ImGui::EndDisabled();
         ImGui::SameLine();
         if (ImGui::Button("Cancelar", ImVec2(100.f, 0))) {
             m_formError.clear();
@@ -871,6 +927,12 @@ void ListView::renderEditModal() {
                     return;
                 }
                 m_store.recordStatusChange(updated, p.status, updated.status);
+            }
+            if (const auto conflict = m_store.duplicateSourcePathReason(updated); conflict.has_value()) {
+                m_formError = "Conflito de cadastro: " + *conflict;
+                if (!ok) ImGui::EndDisabled();
+                ImGui::EndPopup();
+                return;
             }
             m_store.update(updated);
             m_showEdit = false;

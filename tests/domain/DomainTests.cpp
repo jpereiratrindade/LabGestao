@@ -166,6 +166,89 @@ void testJsonRoundtrip() {
     fs::remove_all(tmpDir, ec);
 }
 
+void testProjectStoreSourcePathUniqueness() {
+    ProjectStore store;
+    const fs::path base = fs::temp_directory_path() / ("labgestao-unique-tests-" + ProjectStore::generateId());
+    const fs::path repo = base / "repo";
+    fs::create_directories(repo);
+
+    Project p1;
+    p1.id = "one";
+    p1.name = "Projeto Um";
+    p1.source_path = repo.string();
+    store.add(p1);
+
+    Project p2;
+    p2.id = "two";
+    p2.name = "Projeto Dois";
+    p2.source_path = (base / "." / "repo").string();
+    store.add(p2);
+
+    expectEqInt(static_cast<int>(store.getAll().size()), 1, "duplicate canonical source_path should not be added");
+    expect(store.duplicateSourcePathReason(p2).has_value(), "duplicate canonical source_path should expose a reason");
+
+    std::error_code ec;
+    fs::remove_all(base, ec);
+}
+
+void testProjectStoreDuplicateNameHelper() {
+    ProjectStore store;
+    const fs::path base = fs::temp_directory_path() / ("labgestao-name-tests-" + ProjectStore::generateId());
+    const fs::path repo1 = base / "repo1";
+    const fs::path repo2 = base / "repo2";
+    fs::create_directories(repo1);
+    fs::create_directories(repo2);
+
+    Project p1;
+    p1.id = "one";
+    p1.name = "Projeto Alfa";
+    p1.source_path = repo1.string();
+    store.add(p1);
+
+    Project p2;
+    p2.id = "two";
+    p2.name = " projeto alfa ";
+    p2.source_path = repo2.string();
+    store.add(p2);
+
+    expectEqInt(static_cast<int>(store.getAll().size()), 2, "duplicate names without path collision should be allowed");
+    expect(store.duplicateNormalizedNameReason(p2).has_value(), "duplicate normalized name should expose a reason");
+
+    std::error_code ec;
+    fs::remove_all(base, ec);
+}
+
+void testProjectStoreUpdateBlocksDuplicateSourcePath() {
+    ProjectStore store;
+    const fs::path base = fs::temp_directory_path() / ("labgestao-update-tests-" + ProjectStore::generateId());
+    const fs::path repo1 = base / "repo1";
+    const fs::path repo2 = base / "repo2";
+    fs::create_directories(repo1);
+    fs::create_directories(repo2);
+
+    Project p1;
+    p1.id = "one";
+    p1.name = "Projeto Um";
+    p1.source_path = repo1.string();
+    store.add(p1);
+
+    Project p2;
+    p2.id = "two";
+    p2.name = "Projeto Dois";
+    p2.source_path = repo2.string();
+    store.add(p2);
+
+    p2.source_path = (base / "." / "repo1").string();
+    store.update(p2);
+
+    auto updated = store.findById("two");
+    expect(updated.has_value(), "updated project should still exist");
+    expectEqStr((*updated)->source_path, repo2.string(), "update should be blocked when source_path collides");
+
+    std::error_code ec;
+    fs::remove_all(base, ec);
+}
+
 void testScaffold() {
     const fs::path base = fs::temp_directory_path() / ("labgestao-scaffold-tests-" + ProjectStore::generateId());
     fs::create_directories(base);
@@ -316,6 +399,42 @@ void testApplicationSyncAutoDiscoveredProjects() {
     fs::remove_all(base, ec);
 }
 
+void testApplicationSyncReusesManualProjectWithSamePath() {
+    ProjectStore store;
+
+    const fs::path base = fs::temp_directory_path() / ("labgestao-sync-manual-tests-" + ProjectStore::generateId());
+    const fs::path repo = base / "cre";
+    fs::create_directories(repo);
+    std::ofstream(repo / "CMakeLists.txt") << "cmake_minimum_required(VERSION 3.20)\n";
+
+    Project manual;
+    manual.id = "manual-cre";
+    manual.name = "CRE";
+    manual.status = ProjectStatus::Backlog;
+    manual.auto_discovered = false;
+    manual.source_path = repo.string();
+    manual.source_root = base.string();
+    store.add(manual);
+
+    MonitoredRoot root;
+    root.path = base.string();
+    root.category = "Workspace";
+    root.tags = {"Auto"};
+    root.markerFiles = {"CMakeLists.txt"};
+
+    syncAutoDiscoveredProjects(store, {root});
+
+    expectEqInt(static_cast<int>(store.getAll().size()), 1, "sync should reuse manual project when source_path already exists");
+
+    auto updated = store.findById("manual-cre");
+    expect(updated.has_value(), "manual project should still exist after sync");
+    expect((*updated)->auto_discovered, "manual project should absorb auto-discovered metadata");
+    expectEqStr((*updated)->source_path, repo.string(), "reused project should preserve source_path");
+
+    std::error_code ec;
+    fs::remove_all(base, ec);
+}
+
 } // namespace
 
 int main() {
@@ -323,10 +442,14 @@ int main() {
     testProjectMetrics();
     testGlobalMetrics();
     testJsonRoundtrip();
+    testProjectStoreSourcePathUniqueness();
+    testProjectStoreDuplicateNameHelper();
+    testProjectStoreUpdateBlocksDuplicateSourcePath();
     testScaffold();
     testApplicationReclassifyFromDaiSignals();
     testApplicationReclassifyRespectsInvariants();
     testApplicationSyncAutoDiscoveredProjects();
+    testApplicationSyncReusesManualProjectWithSamePath();
 
     if (g_failures == 0) {
         std::cout << "All domain tests passed.\n";

@@ -292,7 +292,7 @@ void syncAutoDiscoveredProjects(ProjectStore& store, const std::vector<Monitored
 
         if (!target && !detected.source_path.empty()) {
             for (auto& existing : store.getAll()) {
-                if (existing.auto_discovered && samePathBestEffort(existing.source_path, detected.source_path)) {
+                if (samePathBestEffort(existing.source_path, detected.source_path)) {
                     target = &existing;
                     break;
                 }
