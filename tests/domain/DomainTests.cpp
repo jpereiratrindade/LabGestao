@@ -17,7 +17,9 @@ using labgestao::ProjectStore;
 using labgestao::ProjectTemplate;
 using labgestao::ScaffoldRequest;
 using labgestao::application::MonitoredRoot;
+using labgestao::application::analyzeProjectGovernance;
 using labgestao::application::reclassifyKanbanAuto;
+using labgestao::application::refreshProjectGovernance;
 using labgestao::application::syncAutoDiscoveredProjects;
 
 namespace {
@@ -142,6 +144,16 @@ void testJsonRoundtrip() {
     p.adrs.push_back({"adr-1", "T", "C", "D", "K", "2026-03-10"});
     p.dais.push_back({"dai-1", "Action", "A", "owner", "notes", "2026-03-10", "2026-03-20", true, "2026-03-11"});
     p.status_history.push_back({"Backlog", "Review", "2026-03-09"});
+    p.governance_profile.analyzed = true;
+    p.governance_profile.analyzed_at = "2026-03-24";
+    p.governance_profile.analyzed_path = "/tmp/persist";
+    p.governance_profile.path_available = true;
+    p.governance_profile.has_adr = true;
+    p.governance_profile.governance_signals = 6;
+    p.governance_profile.maturity_score = 82;
+    p.governance_profile.vibe_risk = 24;
+    p.governance_profile.maturity_label = "Governanca forte";
+    p.governance_profile.next_actions = {"Manter baseline."};
     store.add(p);
 
     const fs::path tmpDir = fs::temp_directory_path() / ("labgestao-tests-" + ProjectStore::generateId());
@@ -161,6 +173,10 @@ void testJsonRoundtrip() {
     expectEqInt(static_cast<int>(loadedProject.adrs.size()), 1, "roundtrip ADR count");
     expectEqInt(static_cast<int>(loadedProject.dais.size()), 1, "roundtrip DAI count");
     expectEqInt(static_cast<int>(loadedProject.status_history.size()), 1, "roundtrip status history count");
+    expect(loadedProject.governance_profile.analyzed, "roundtrip governance profile analyzed");
+    expectEqInt(loadedProject.governance_profile.maturity_score, 82, "roundtrip governance maturity score");
+    expectEqInt(static_cast<int>(loadedProject.governance_profile.next_actions.size()), 1,
+                "roundtrip governance next actions count");
 
     std::error_code ec;
     fs::remove_all(tmpDir, ec);
@@ -244,6 +260,70 @@ void testProjectStoreUpdateBlocksDuplicateSourcePath() {
     auto updated = store.findById("two");
     expect(updated.has_value(), "updated project should still exist");
     expectEqStr((*updated)->source_path, repo2.string(), "update should be blocked when source_path collides");
+
+    std::error_code ec;
+    fs::remove_all(base, ec);
+}
+
+void testProjectStoreLoadDeduplicatesLegacySourcePathCollisions() {
+    const fs::path base = fs::temp_directory_path() / ("labgestao-load-dedup-tests-" + ProjectStore::generateId());
+    const fs::path repo = base / "cre";
+    fs::create_directories(repo);
+
+    const fs::path jsonPath = base / "projects.json";
+    std::ofstream out(jsonPath);
+    out << R"([
+  {
+    "id": "manual-cre",
+    "name": "CRE",
+    "description": "manual",
+    "status": "Backlog",
+    "category": "Governado",
+    "tags": ["Manual"],
+    "connections": [],
+    "created_at": "2026-03-19",
+    "graph_x": 0.0,
+    "graph_y": 0.0,
+    "auto_discovered": false,
+    "source_path": ")" << repo.string() << R"(",
+    "source_root": ")" << base.string() << R"(",
+    "adrs": [],
+    "dais": [],
+    "status_history": []
+  },
+  {
+    "id": "auto-cre",
+    "name": "cre",
+    "description": "Projeto detectado automaticamente em pasta monitorada.",
+    "status": "Doing",
+    "category": "C++",
+    "tags": ["Auto", "CMake"],
+    "connections": [],
+    "created_at": "2026-03-20",
+    "graph_x": 10.0,
+    "graph_y": 20.0,
+    "auto_discovered": true,
+    "source_path": ")" << (base / "." / "cre").string() << R"(",
+    "source_root": ")" << base.string() << R"(",
+    "adrs": [],
+    "dais": [],
+    "status_history": [{"from":"Backlog","to":"Doing","moved_at":"2026-03-20"}]
+  }
+])";
+    out.close();
+
+    ProjectStore store;
+    expect(store.loadFromJson(jsonPath.string()), "legacy duplicate source_path json should load");
+    expectEqInt(static_cast<int>(store.getAll().size()), 1,
+                "load should deduplicate legacy entries with same source_path");
+
+    const Project& merged = store.getAll().front();
+    expectEqStr(merged.name, "CRE", "manual name should win during dedup");
+    expect(merged.auto_discovered, "merged project should keep auto-discovered signal");
+    expectEqInt(static_cast<int>(merged.status), static_cast<int>(ProjectStatus::Doing),
+                "more advanced status should survive dedup");
+    expectEqInt(static_cast<int>(merged.status_history.size()), 1,
+                "status history should be preserved from duplicate");
 
     std::error_code ec;
     fs::remove_all(base, ec);
@@ -435,6 +515,70 @@ void testApplicationSyncReusesManualProjectWithSamePath() {
     fs::remove_all(base, ec);
 }
 
+void testAnalyzeProjectGovernance() {
+    const fs::path base = fs::temp_directory_path() / ("labgestao-governance-tests-" + ProjectStore::generateId());
+    fs::create_directories(base / "docs" / "adr");
+    fs::create_directories(base / "docs" / "architecture");
+    fs::create_directories(base / "docs" / "dai");
+    fs::create_directories(base / "policies");
+    fs::create_directories(base / "mcp" / "contracts");
+    fs::create_directories(base / "examples");
+
+    std::ofstream(base / "docs" / "adr" / "ADR-0001.md") << "# ADR\n";
+    std::ofstream(base / "docs" / "architecture" / "DDD.md") << "# DDD\n";
+    std::ofstream(base / "docs" / "dai" / "DAI.md") << "# DAI\n";
+    std::ofstream(base / "policies" / "approval_matrix.md") << "# Approval\n";
+    std::ofstream(base / "policies" / "ai_usage_policy.md") << "# Policy\n";
+    std::ofstream(base / "mcp" / "tool_schema.json") << "{}\n";
+    std::ofstream(base / "mcp" / "contracts" / "modify_code.contract.json") << "{}\n";
+    std::ofstream(base / "examples" / "evidence_log.json") << "{}\n";
+    std::ofstream(base / "CONTRIBUTING.md") << "# Contributing\n";
+    std::ofstream(base / "CODEOWNERS") << "* @owner\n";
+
+    Project p;
+    p.id = "gov-1";
+    p.name = "Gov";
+    p.source_path = base.string();
+
+    const auto profile = analyzeProjectGovernance(p);
+    expect(profile.analyzed, "governance profile should mark analysis");
+    expect(profile.path_available, "governance profile should see source path");
+    expect(profile.has_adr, "governance profile should detect ADR");
+    expect(profile.has_ddd, "governance profile should detect DDD");
+    expect(profile.has_dai, "governance profile should detect DAI");
+    expect(profile.has_policies, "governance profile should detect policies");
+    expect(profile.has_tool_contracts, "governance profile should detect tool contracts");
+    expect(profile.has_approval_policy, "governance profile should detect approval policy");
+    expect(profile.has_audit_evidence, "governance profile should detect audit evidence");
+    expectEqInt(profile.governance_signals, 6, "governance profile signals");
+    expect(profile.maturity_score >= 90, "governance profile should produce high maturity");
+
+    std::error_code ec;
+    fs::remove_all(base, ec);
+}
+
+void testRefreshProjectGovernancePersistsProfile() {
+    const fs::path base = fs::temp_directory_path() / ("labgestao-refresh-governance-tests-" + ProjectStore::generateId());
+    fs::create_directories(base / "policies");
+    std::ofstream(base / "policies" / "approval_matrix.md") << "# Approval\n";
+
+    ProjectStore store;
+    Project p;
+    p.id = "gov-refresh";
+    p.name = "Gov Refresh";
+    p.source_path = base.string();
+    store.add(p);
+
+    expect(refreshProjectGovernance(store, "gov-refresh"), "refresh governance should report change");
+    auto updated = store.findById("gov-refresh");
+    expect(updated.has_value(), "updated governance project should exist");
+    expect((*updated)->governance_profile.analyzed, "governance profile should persist on project");
+    expect((*updated)->governance_profile.has_policies, "governance profile should persist detected policies");
+
+    std::error_code ec;
+    fs::remove_all(base, ec);
+}
+
 } // namespace
 
 int main() {
@@ -445,11 +589,14 @@ int main() {
     testProjectStoreSourcePathUniqueness();
     testProjectStoreDuplicateNameHelper();
     testProjectStoreUpdateBlocksDuplicateSourcePath();
+    testProjectStoreLoadDeduplicatesLegacySourcePathCollisions();
     testScaffold();
     testApplicationReclassifyFromDaiSignals();
     testApplicationReclassifyRespectsInvariants();
     testApplicationSyncAutoDiscoveredProjects();
     testApplicationSyncReusesManualProjectWithSamePath();
+    testAnalyzeProjectGovernance();
+    testRefreshProjectGovernancePersistsProfile();
 
     if (g_failures == 0) {
         std::cout << "All domain tests passed.\n";

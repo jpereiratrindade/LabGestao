@@ -1,5 +1,6 @@
 # Build and temporary files
 build/
+build-codex/
 build-ninja/
 bin/
 obj/

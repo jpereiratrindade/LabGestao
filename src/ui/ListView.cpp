@@ -1,4 +1,5 @@
 #include "ui/ListView.hpp"
+#include "app/ApplicationServices.hpp"
 #include "imgui.h"
 #include <algorithm>
 #include <sstream>
@@ -360,6 +361,8 @@ void ListView::renderDetailPanel() {
     ImGui::Spacing();
     renderOpenInEditorSection(p);
     ImGui::Spacing();
+    renderGovernanceProfileSection(p);
+    ImGui::Spacing();
     renderAdrSection(p);
     ImGui::Spacing();
     renderDaiSection(p);
@@ -485,6 +488,72 @@ void ListView::renderOpenInEditorSection(const Project& p) {
         }
     }
     if (!hasPath) ImGui::EndDisabled();
+}
+
+void ListView::renderGovernanceProfileSection(const Project& p) {
+    if (!ImGui::CollapsingHeader("Governance Profile", ImGuiTreeNodeFlags_DefaultOpen)) return;
+
+    static std::string s_lastAutoRefreshKey;
+    const std::string refreshKey = p.id + "|" + p.source_path;
+    if (!p.source_path.empty() &&
+        (!p.governance_profile.analyzed || p.governance_profile.analyzed_path != p.source_path) &&
+        s_lastAutoRefreshKey != refreshKey) {
+        labgestao::application::refreshProjectGovernance(m_store, p.id);
+        s_lastAutoRefreshKey = refreshKey;
+    }
+
+    auto refreshed = m_store.findById(p.id);
+    if (!refreshed) return;
+    const Project& current = **refreshed;
+    const auto& profile = current.governance_profile;
+    const ImVec4 maturityColor =
+        profile.maturity_score >= 80 ? ImVec4(0.25f, 0.80f, 0.45f, 1.f) :
+        profile.maturity_score >= 55 ? ImVec4(0.90f, 0.72f, 0.18f, 1.f) :
+                                       ImVec4(0.92f, 0.40f, 0.32f, 1.f);
+
+    ImGui::TextDisabled("Path analisado:");
+    ImGui::TextWrapped("%s", profile.path_available ? profile.analyzed_path.c_str() : "(nao disponivel)");
+    ImGui::Spacing();
+    ImGui::Text("Maturidade: %d/100", profile.maturity_score);
+    ImGui::Text("Vibe Risk: %d/100", profile.vibe_risk);
+    ImGui::Text("Governanca operacional: %d/8", profile.governance_signals);
+    ImGui::TextColored(maturityColor, "%s", profile.maturity_label.empty() ? "Sem analise" : profile.maturity_label.c_str());
+    if (ImGui::Button("Atualizar Governance Profile")) {
+        labgestao::application::refreshProjectGovernance(m_store, current.id);
+        s_lastAutoRefreshKey.clear();
+    }
+    if (!profile.analyzed) {
+        ImGui::TextDisabled("Nenhuma analise persistida ainda.");
+    } else if (!profile.analyzed_at.empty()) {
+        ImGui::TextDisabled("Atualizado em: %s", profile.analyzed_at.c_str());
+    }
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Sinais principais");
+    ImGui::BulletText("ADR: %s", profile.has_adr ? "OK" : "-");
+    ImGui::BulletText("DDD: %s", profile.has_ddd ? "OK" : "-");
+    ImGui::BulletText("DAI: %s", profile.has_dai ? "OK" : "-");
+    ImGui::BulletText("Policies: %s", profile.has_policies ? "OK" : "-");
+    ImGui::BulletText("Tool Contracts: %s", profile.has_tool_contracts ? "OK" : "-");
+    ImGui::BulletText("Approval Matrix: %s", profile.has_approval_policy ? "OK" : "-");
+    ImGui::BulletText("Audit/Evidence: %s", profile.has_audit_evidence ? "OK" : "-");
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Leitura sintetica");
+    if (profile.maturity_score >= 80 && profile.vibe_risk < 30) {
+        ImGui::TextWrapped("Projeto com governanca operacional robusta. A prioridade aqui e manter coerencia entre politicas, contratos e evidencias.");
+    } else if (profile.maturity_score >= 55) {
+        ImGui::TextWrapped("Projeto com base documental razoavel, mas ainda com lacunas de enforcement ou auditabilidade.");
+    } else {
+        ImGui::TextWrapped("Projeto ainda exposto a improviso institucional. A recomendacao e fortalecer fronteiras, aprovacao e trilha de evidencia.");
+    }
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Proximos passos");
+    for (std::size_t i = 0; i < profile.next_actions.size(); ++i) {
+        const std::string line = std::to_string(i + 1) + ". " + profile.next_actions[i];
+        ImGui::TextWrapped("%s", line.c_str());
+    }
 }
 
 void ListView::renderAdrSection(Project& p) {
@@ -853,6 +922,9 @@ void ListView::renderCreateModal() {
                 }
                 p.source_path = scaffold.projectDir;
                 p.source_root = req.baseDirectory;
+            }
+            if (!p.source_path.empty()) {
+                p.governance_profile = labgestao::application::analyzeProjectGovernance(p);
             }
 
             std::string reason;

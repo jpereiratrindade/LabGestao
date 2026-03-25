@@ -10,6 +10,14 @@ Formato recomendado:
 
 ## Entradas
 
+### 2026-03-24
+- Decision: tratar governanca assistida por IA como capacidade operacional baseada em evidencia, e nao apenas como presenca de artefatos.
+- Decision: ampliar a leitura do inventario para distinguir governanca superficial de governanca normativa/operacional.
+- Action: reforcar o bootstrap `C++ Governado` com `context_boundary_policy`, `evidence_and_audit_policy`, `governance_task_packet` e `evidence_log`.
+- Action: incluir novo contrato `review_change.contract.json` para revisao independente orientada a politica e risco.
+- Action: ajustar exportacoes e plano de acao do inventario para considerar `policies`, `tool contracts`, `approval matrix` e `audit/evidence`.
+- Action: atualizar README, DDD, ADRs e manuais para refletir a nova leitura de governanca forte.
+
 ### 2026-03-18
 - Decision: consolidar avaliacao documental/codigo para alinhar plano com estado real do projeto.
 - Decision: registrar formalmente a necessidade de extrair `Application Services` para eliminar duplicacao de orquestracao.

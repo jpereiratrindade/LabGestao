@@ -42,7 +42,11 @@ private:
         bool hasDdd{false};
         bool hasDai{false};
         bool hasGovernance{false};
-        int governanceSignals{0}; // 0..4
+        bool hasPolicies{false};
+        bool hasToolContracts{false};
+        bool hasApprovalPolicy{false};
+        bool hasAuditEvidence{false};
+        int governanceSignals{0}; // 0..8
         bool hasAsanUbsan{false};
         bool hasLeakCheck{false};
         bool hasStaticAnalysis{false};
@@ -62,9 +66,13 @@ private:
 
     void applyTheme();
     void reclassifyKanbanAuto();
+    void refreshGovernanceProfiles();
+    void processPendingGovernanceRefresh();
+    void processPendingInventoryScan();
     void renderPlanningTab();
     void renderFlowMetricsTab();
     void renderInventoryTab();
+    RepoInventoryEntry buildRepoInventoryEntry(const std::string& repoPath) const;
     void scanWorkspaceInventory();
     std::vector<const RepoInventoryEntry*> topCriticalRepos(std::size_t limit) const;
     bool loadLatestInventorySnapshotMetrics(float* avgTotal, std::string* generatedAt, std::string* errorMsg) const;
@@ -100,11 +108,19 @@ private:
     int           m_repoSortMode{0}; // 0=Total, 1=Disciplina, 2=Vibe, 3=Operacional, 4=Maturidade, 5=ConfiabCfg, 6=ConfiabExec
     bool          m_repoSortDesc{true};
     std::vector<RepoInventoryEntry> m_repoInventory;
+    bool          m_repoInventoryScanRunning{false};
+    std::vector<std::string> m_pendingRepoInventoryCandidates;
+    std::vector<RepoInventoryEntry> m_pendingRepoInventoryEntries;
+    std::size_t   m_pendingRepoInventoryIndex{0};
     std::string   m_repoInventoryRoot;
     std::string   m_repoInventoryMessage;
     std::string   m_repoSelectedPath;
     std::string   m_repoActionPlanPath;
     std::vector<std::string> m_repoActionPlan;
+    bool          m_governanceRefreshRunning{false};
+    std::vector<std::string> m_pendingGovernanceProjectIds;
+    std::size_t   m_pendingGovernanceIndex{0};
+    int           m_pendingGovernanceChanged{0};
     bool          m_themeApplied{false};
     bool          m_requestExit{false};
 };

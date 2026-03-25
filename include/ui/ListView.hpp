@@ -21,6 +21,7 @@ private:
     void renderTable();
     void renderDetailPanel();
     void renderOpenInEditorSection(const Project& p);
+    void renderGovernanceProfileSection(const Project& p);
     void renderAdrSection(Project& p);
     void renderDaiSection(Project& p);
     void renderMetricsSection(const Project& p);

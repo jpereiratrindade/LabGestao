@@ -11,6 +11,7 @@
 - [ADR-0003 - Workspace como fonte de verdade para data_dir e roots monitoradas](./ADR-0003-workspace-source-of-truth.md) (`accepted`)
 - [ADR-0004 - Reclassificacao automatica de Kanban para projetos auto-descobertos](./ADR-0004-auto-kanban-reclassification.md) (`accepted`)
 - [ADR-0005 - Extrair Application Services para orquestracao de casos de uso](./ADR-0005-application-services-for-orchestration.md) (`proposed`)
+- [ADR-0006 - Governanca orientada a evidencia no scaffold e no inventario](./ADR-0006-governance-evidence-and-inventory-signals.md) (`accepted`)
 
 ## Template sugerido
 - Contexto

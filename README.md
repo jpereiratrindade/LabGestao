@@ -56,7 +56,7 @@ cd build-ninja
 
 Na tela `Projetos`, ao clicar em `+ Novo Projeto`, voce pode:
 
-- Escolher `Template`: `Nenhum`, `C++` ou `Python`
+- Escolher `Template`: `Nenhum`, `C++`, `Python` ou `C++ Governado`
 - Marcar `Criar estrutura base no disco`
 - Informar o `Diretorio base` (ou usar o padrao)
 
@@ -64,12 +64,15 @@ Estrutura minima gerada:
 
 - `C++`: `CMakeLists.txt`, `README.md`, `.gitignore`, `src/main.cpp`, `include/`, `tests/`
 - `Python`: `pyproject.toml`, `README.md`, `.gitignore`, `src/<pacote>/`, `tests/test_smoke.py`
+- `C++ Governado`: bootstrap completo via `init_ai_governance.sh`, com `adr/`, `ddd/`, `policies/`, `mcp/contracts/`, `prompts/`, `examples/`, validadores e CI
 
 ## Governanca tecnica
 
 - DDD: `docs/architecture/DDD.md`
 - ADRs: `docs/adr/README.md`
 - DAI log: `docs/dai/DAI.md`
+- Manual do scaffold governado: `docs/manuals/GOVERNED_CPP_BOOTSTRAP.md`
+- Manual do inventario e leitura de governanca: `docs/manuals/INVENTORY_GOVERNANCE_MODEL.md`
 
 ## CI
 
@@ -169,6 +172,7 @@ Nota de arquitetura:
 ## DAI/ADR e Metricas na UI
 
 - Na aba de detalhes do projeto, a UI permite criar ADR e criar/fechar itens DAI.
+- Na aba de detalhes do projeto, a UI agora exibe um `Governance Profile` com maturidade, vibe risk, sinais normativos e proximos passos.
 - A aba de metricas exibe indicadores globais de fluxo (WIP, throughput, aging medio, impedimentos) para janelas de 7/14/30 dias.
 
 ## Tabela de projetos
@@ -184,3 +188,36 @@ Se voce quiser zerar o estado local (sem projetos antigos), remova:
 rm -f ~/.config/labgestao/settings.json
 rm -f /caminho/do/workspace/data/projects.json
 ```
+
+## Inventario e leitura de governanca
+
+A aba `Inventario` nao mede apenas sinais superficiais de organizacao. A leitura de maturidade/governanca agora considera dois niveis:
+
+- Base documental: `ADR`, `DDD`, `DAI`
+- Governanca operacional: `policies`, `tool contracts`, `approval matrix` e `audit/evidence`
+
+Os sinais de governanca passaram de `0..4` para `0..8`, e impactam:
+
+- `scoreMaturity`
+- `scoreEngineeringDiscipline`
+- `scoreVibeRisk`
+- plano de acao sugerido por repositorio
+- exportacoes `inventory-YYYY-MM-DD.csv/json`
+
+Isso foi feito para distinguir:
+
+- repositorio com “governanca de fachada” (README, templates, CODEOWNERS)
+- repositorio com governanca operacional de verdade (fronteiras, contratos, aprovacao e evidencia)
+
+## Workflow recomendado para projetos governados
+
+1. Criar projeto com template `C++ Governado`.
+2. Revisar `policies/`, `mcp/contracts/` e `prompts/` antes do primeiro uso assistido por IA.
+3. Preencher um `Governance Task Packet` para toda mudanca relevante.
+4. Registrar evidencias estruturadas antes de promover a mudanca.
+5. Rodar:
+   - `python3 scripts/validate_tool_contracts.py`
+   - `python3 scripts/validate_governance_repo.py`
+   - `./scripts/run_quality.sh`
+
+O objetivo nao e apenas acelerar scaffold, mas reduzir risco institucional e deixar revisao/auditoria viaveis.

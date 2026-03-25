@@ -83,6 +83,72 @@ static bool sameCanonicalSourcePath(const std::string& lhs, const std::string& r
     return a == b;
 }
 
+static int projectDedupPriority(const Project& p) {
+    int score = 0;
+    if (!p.auto_discovered) score += 100;
+    if (p.status != ProjectStatus::Backlog) score += 20;
+    if (!p.adrs.empty()) score += 10;
+    if (!p.dais.empty()) score += 10;
+    if (p.governance_profile.analyzed) score += 8;
+    if (!p.description.empty()) score += 5;
+    if (!p.category.empty()) score += 5;
+    if (!p.tags.empty()) score += 5;
+    return score;
+}
+
+template<typename T, typename EqualFn>
+static void appendUniqueEntries(std::vector<T>& target, const std::vector<T>& incoming, EqualFn equalFn) {
+    for (const auto& item : incoming) {
+        bool exists = false;
+        for (const auto& current : target) {
+            if (equalFn(current, item)) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) target.push_back(item);
+    }
+}
+
+static Project mergeProjectsForSameSourcePath(Project preferred, const Project& other) {
+    if (preferred.name.empty() && !other.name.empty()) preferred.name = other.name;
+    if (preferred.description.empty() && !other.description.empty()) preferred.description = other.description;
+    if (preferred.category.empty() && !other.category.empty()) preferred.category = other.category;
+    if (preferred.created_at.empty() || (!other.created_at.empty() && other.created_at < preferred.created_at)) {
+        preferred.created_at = other.created_at;
+    }
+    if (preferred.source_root.empty() && !other.source_root.empty()) preferred.source_root = other.source_root;
+    if (preferred.source_path.empty() && !other.source_path.empty()) preferred.source_path = other.source_path;
+    if (preferred.graph_x == 0.0f && preferred.graph_y == 0.0f && (other.graph_x != 0.0f || other.graph_y != 0.0f)) {
+        preferred.graph_x = other.graph_x;
+        preferred.graph_y = other.graph_y;
+    }
+    if (preferred.status == ProjectStatus::Backlog && other.status != ProjectStatus::Backlog) {
+        preferred.status = other.status;
+    }
+    preferred.auto_discovered = preferred.auto_discovered || other.auto_discovered;
+    if (!preferred.governance_profile.analyzed && other.governance_profile.analyzed) {
+        preferred.governance_profile = other.governance_profile;
+    }
+
+    appendUniqueEntries(preferred.tags, other.tags, [](const std::string& a, const std::string& b) {
+        return lowerAscii(a) == lowerAscii(b);
+    });
+    appendUniqueEntries(preferred.connections, other.connections, [](const std::string& a, const std::string& b) {
+        return a == b;
+    });
+    appendUniqueEntries(preferred.adrs, other.adrs, [](const Project::AdrEntry& a, const Project::AdrEntry& b) {
+        return !a.id.empty() && a.id == b.id;
+    });
+    appendUniqueEntries(preferred.dais, other.dais, [](const Project::DaiEntry& a, const Project::DaiEntry& b) {
+        return !a.id.empty() && a.id == b.id;
+    });
+    appendUniqueEntries(preferred.status_history, other.status_history, [](const Project::StatusTransition& a, const Project::StatusTransition& b) {
+        return a.from == b.from && a.to == b.to && a.moved_at == b.moved_at;
+    });
+    return preferred;
+}
+
 // ── ID generation ───────────────────────────────────────────────────────────
 std::string ProjectStore::generateId() {
     static std::mt19937_64 rng{std::random_device{}()};
@@ -208,6 +274,27 @@ static json projectToJson(const Project& p) {
         return j;
     };
 
+    auto governanceProfileToJson = [](const Project::GovernanceProfile& gp) {
+        json j;
+        j["analyzed"] = gp.analyzed;
+        j["analyzed_at"] = gp.analyzed_at;
+        j["analyzed_path"] = gp.analyzed_path;
+        j["path_available"] = gp.path_available;
+        j["has_adr"] = gp.has_adr;
+        j["has_ddd"] = gp.has_ddd;
+        j["has_dai"] = gp.has_dai;
+        j["has_policies"] = gp.has_policies;
+        j["has_tool_contracts"] = gp.has_tool_contracts;
+        j["has_approval_policy"] = gp.has_approval_policy;
+        j["has_audit_evidence"] = gp.has_audit_evidence;
+        j["governance_signals"] = gp.governance_signals;
+        j["maturity_score"] = gp.maturity_score;
+        j["vibe_risk"] = gp.vibe_risk;
+        j["maturity_label"] = gp.maturity_label;
+        j["next_actions"] = gp.next_actions;
+        return j;
+    };
+
     json j;
     j["id"]          = p.id;
     j["name"]        = p.name;
@@ -228,6 +315,7 @@ static json projectToJson(const Project& p) {
     for (const auto& dai : p.dais) j["dais"].push_back(daiToJson(dai));
     j["status_history"] = json::array();
     for (const auto& tr : p.status_history) j["status_history"].push_back(transitionToJson(tr));
+    j["governance_profile"] = governanceProfileToJson(p.governance_profile);
     return j;
 }
 
@@ -265,6 +353,27 @@ static Project projectFromJson(const json& j) {
         return tr;
     };
 
+    auto governanceProfileFromJson = [](const json& v) {
+        Project::GovernanceProfile gp;
+        gp.analyzed = v.value("analyzed", false);
+        gp.analyzed_at = v.value("analyzed_at", "");
+        gp.analyzed_path = v.value("analyzed_path", "");
+        gp.path_available = v.value("path_available", false);
+        gp.has_adr = v.value("has_adr", false);
+        gp.has_ddd = v.value("has_ddd", false);
+        gp.has_dai = v.value("has_dai", false);
+        gp.has_policies = v.value("has_policies", false);
+        gp.has_tool_contracts = v.value("has_tool_contracts", false);
+        gp.has_approval_policy = v.value("has_approval_policy", false);
+        gp.has_audit_evidence = v.value("has_audit_evidence", false);
+        gp.governance_signals = v.value("governance_signals", 0);
+        gp.maturity_score = v.value("maturity_score", 0);
+        gp.vibe_risk = v.value("vibe_risk", 0);
+        gp.maturity_label = v.value("maturity_label", "");
+        gp.next_actions = v.value("next_actions", std::vector<std::string>{});
+        return gp;
+    };
+
     Project p;
     p.id          = j.value("id",          "");
     p.name        = j.value("name",        "");
@@ -287,6 +396,9 @@ static Project projectFromJson(const json& j) {
     }
     if (j.contains("status_history") && j["status_history"].is_array()) {
         for (const auto& v : j["status_history"]) p.status_history.push_back(transitionFromJson(v));
+    }
+    if (j.contains("governance_profile") && j["governance_profile"].is_object()) {
+        p.governance_profile = governanceProfileFromJson(j["governance_profile"]);
     }
     return p;
 }
@@ -390,7 +502,30 @@ bool ProjectStore::loadFromJson(const std::string& path) {
         json data = json::parse(f);
         m_projects.clear();
         for (const auto& j : data) {
-            m_projects.push_back(projectFromJson(j));
+            Project loaded = projectFromJson(j);
+            const std::string loadedPath = canonicalSourcePath(loaded.source_path);
+            if (loadedPath.empty()) {
+                m_projects.push_back(std::move(loaded));
+                continue;
+            }
+
+            bool merged = false;
+            for (auto& existing : m_projects) {
+                if (!sameCanonicalSourcePath(existing.source_path, loaded.source_path)) continue;
+
+                Project preferred = existing;
+                Project secondary = loaded;
+                if (projectDedupPriority(secondary) > projectDedupPriority(preferred)) {
+                    std::swap(preferred, secondary);
+                }
+                existing = mergeProjectsForSameSourcePath(std::move(preferred), secondary);
+                merged = true;
+                break;
+            }
+
+            if (!merged) {
+                m_projects.push_back(std::move(loaded));
+            }
         }
         m_dirty = false;
         return true;

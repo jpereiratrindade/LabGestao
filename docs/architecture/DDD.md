@@ -54,6 +54,25 @@ Responsavel por configurar raiz monitorada e persistencia ativa.
   - roots monitoradas devem vir de configuracao, nunca hardcoded
   - limpar projetos remove somente estado do LabGestao (arquivo JSON), sem apagar codigo-fonte
 
+### 6) Governanca Operacional Assistida por IA
+Responsavel por distinguir apoio tecnico simples de contexto governado com evidencia e responsabilizacao.
+
+- Entidade conceitual: `GovernanceProfile` (por projeto/repositorio inventariado)
+- Sinais observados:
+  - `ADR`
+  - `DDD`
+  - `DAI`
+  - `policies`
+  - `tool contracts`
+  - `approval matrix`
+  - `audit/evidence`
+- Regras:
+  - repositorio com sinais superficiais nao deve ser interpretado como repositorio governado
+  - contratos e politicas sao tratados como infraestrutura normativa, nao apenas documentacao auxiliar
+  - projetos governados devem permitir reconstrucao de contexto, aprovacao e evidencias minimas
+  - o inventario deve apoiar leitura proporcional ao risco, e nao apenas checklist documental
+  - o snapshot de governanca deve poder ser persistido junto ao projeto para reutilizacao na aplicacao
+
 ## Agregados e Fronteiras
 
 - Agregado principal: `Project`
@@ -78,17 +97,28 @@ Responsavel por configurar raiz monitorada e persistencia ativa.
 - Workspace Root
 - Data Dir Ativo
 - Reclassificacao Automatizada
+- Governanca Operacional
+- Approval Matrix
+- Tool Contract
+- Evidence Log
+- Governance Task Packet
 
 ## Aplicacao
 A camada de UI (`src/ui`) orquestra casos de uso e aciona regras de dominio (`src/domain`).
 A inicializacao (`src/app/AppRuntime.cpp`) sincroniza auto-descoberta e aplica reclassificacao automatica do Kanban.
 Persistencia atual via JSON em `<data_dir>/projects.json`, com configuracao em `~/.config/labgestao/settings.json`.
+O inventario da UI tambem constroi uma leitura derivada de governanca/disciplinas de engenharia sobre os repositorios monitorados.
+O `GovernanceProfile` agora integra o modelo de `Project`, com analise gerada pela camada de aplicacao e persistida no `projects.json`.
 
-## Estado atual (2026-03-18)
+## Estado atual (2026-03-24)
 - Ja existem testes automatizados de dominio/persistencia/scaffold em `tests/domain/DomainTests.cpp`.
 - Metricas de fluxo por projeto e globais estao implementadas no dominio (`ProjectStore`) e exibidas na UI.
 - Cadastro e fechamento de DAI, assim como cadastro de ADR por projeto, ja estao disponiveis na UI.
 - Ainda existe duplicacao de orquestracao entre runtime e UI em fluxos como reclassificacao automatica.
+- O template `C++ Governado` usa `init_ai_governance.sh` para gerar scaffold com politicas, contratos, validadores e artefatos de evidencia.
+- O inventario passou a considerar sinais normativos fortes (`policies`, `tool contracts`, `approval matrix`, `audit/evidence`) alem de `ADR`, `DDD` e `DAI`.
+- O score de maturidade/governanca foi ajustado para distinguir governanca de fachada de governanca operacional.
+- O painel de detalhe do projeto passou a usar o `governance_profile` persistido, com atualizacao via `Application Services`.
 
 ## Politica de Reclassificacao (Kanban Auto)
 Aplicada para projetos auto-descobertos:
@@ -107,3 +137,4 @@ Transicoes validas devem passar por `canMoveToStatus` e ser registradas em `stat
 1. Extrair casos de uso explicitos (`Application Services`) para reduzir logica em UI/runtime e eliminar duplicacao de orquestracao.
 2. Expandir cobertura de testes para camada de aplicacao (casos de uso), mantendo os testes de dominio existentes.
 3. Criar validadores adicionais de invariantes de dominio fora da camada de apresentacao.
+4. Evoluir o `GovernanceProfile` de snapshot analitico para capacidade mais completa de workflow institucional, incluindo ciclos de aprovacao e evidencias estruturadas.

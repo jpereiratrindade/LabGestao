@@ -20,6 +20,9 @@ struct ReclassifyKanbanAutoResult {
     int skipped{0};
 };
 
+Project::GovernanceProfile analyzeProjectGovernance(const Project& project);
+bool refreshProjectGovernance(ProjectStore& store, const std::string& projectId);
+int refreshAllProjectGovernance(ProjectStore& store);
 void syncAutoDiscoveredProjects(ProjectStore& store, const std::vector<MonitoredRoot>& roots);
 ReclassifyKanbanAutoResult reclassifyKanbanAuto(ProjectStore& store);
 

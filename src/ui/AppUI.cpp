@@ -4,6 +4,7 @@
 #include "json.hpp"
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <cmath>
 #include <cstring>
 #include <cstdio>
@@ -197,6 +198,23 @@ bool hasAnyFile(const fs::path& root, std::initializer_list<std::string_view> na
         if (fs::exists(root / fs::path(name))) return true;
     }
     return false;
+}
+
+bool isInventoryCandidateFolder(const fs::path& dir) {
+    if (fs::exists(dir / ".git")) return true;
+    return hasAnyFile(dir, {
+        "CMakeLists.txt",
+        "meson.build",
+        "Makefile",
+        "compile_commands.json",
+        "pyproject.toml",
+        "requirements.txt",
+        "setup.py",
+        "Pipfile",
+        "package.json",
+        "Cargo.toml",
+        "go.mod"
+    });
 }
 
 bool hasCiConfig(const fs::path& root) {
@@ -490,6 +508,33 @@ bool hasDaiEvidence(const fs::path& root) {
     return hasFileNameToken(root, {"dai"}, 3);
 }
 
+bool hasPoliciesEvidence(const fs::path& root) {
+    std::error_code ec;
+    if (fs::exists(root / "policies", ec) && fs::is_directory(root / "policies", ec)) return true;
+    if (fs::exists(root / "docs" / "policies", ec) && fs::is_directory(root / "docs" / "policies", ec)) return true;
+    return hasFileNameToken(root, {"policy", "policies", "approval_matrix", "safety_constraints"}, 4);
+}
+
+bool hasToolContractsEvidence(const fs::path& root) {
+    std::error_code ec;
+    if (fs::exists(root / "mcp" / "contracts", ec) && fs::is_directory(root / "mcp" / "contracts", ec)) return true;
+    if (fs::exists(root / "mcp" / "tool_schema.json", ec)) return true;
+    return hasFileNameToken(root, {"contract", "tool_schema", "agent_interface"}, 4);
+}
+
+bool hasApprovalPolicyEvidence(const fs::path& root) {
+    if (hasAnyFile(root / "policies", {"approval_matrix.md", "approval-matrix.md"})) return true;
+    if (hasAnyFile(root / "docs", {"approval_matrix.md", "approval-matrix.md"})) return true;
+    return hasFileNameToken(root, {"approval_matrix", "approval-policy", "codeowners"}, 4);
+}
+
+bool hasAuditEvidence(const fs::path& root) {
+    if (hasAnyFile(root / "examples", {"evidence_log.json", "audit_log.json"})) return true;
+    if (hasAnyFile(root / "prompts", {"governance_task_packet.md", "task_template.md"})) return true;
+    if (hasAnyFile(root / "scripts", {"validate_governance_repo.py", "audit_governance.sh"})) return true;
+    return hasFileNameToken(root, {"evidence_log", "audit", "traceability", "governance_task_packet"}, 4);
+}
+
 int governanceSignalsCount(const fs::path& root) {
     int signals = 0;
     if (hasAnyFile(root, {"CONTRIBUTING.md", "contributing.md"})) signals++;
@@ -501,7 +546,11 @@ int governanceSignalsCount(const fs::path& root) {
         hasAnyFile(root / ".github", {"issue_template.md", "ISSUE_TEMPLATE.md"})) {
         signals++;
     }
-    return std::clamp(signals, 0, 4);
+    if (hasPoliciesEvidence(root)) signals++;
+    if (hasToolContractsEvidence(root)) signals++;
+    if (hasApprovalPolicyEvidence(root)) signals++;
+    if (hasAuditEvidence(root)) signals++;
+    return std::clamp(signals, 0, 8);
 }
 
 int computeMaturityScore(bool hasAdr, bool hasDdd, bool hasDai, int governanceSignals) {
@@ -509,8 +558,8 @@ int computeMaturityScore(bool hasAdr, bool hasDdd, bool hasDai, int governanceSi
     if (hasAdr) score += 25;
     if (hasDdd) score += 25;
     if (hasDai) score += 25;
-    const int gov = std::clamp(governanceSignals, 0, 4);
-    score += static_cast<int>(std::lround((static_cast<double>(gov) / 4.0) * 25.0));
+    const int gov = std::clamp(governanceSignals, 0, 8);
+    score += static_cast<int>(std::lround((static_cast<double>(gov) / 8.0) * 25.0));
     return std::clamp(score, 0, 100);
 }
 
@@ -540,7 +589,7 @@ int computeEngineeringDisciplineScore(
     if (hasAdr) score += 3.0;
     if (hasDdd) score += 3.0;
     if (hasDai) score += 2.0;
-    score += static_cast<double>(std::clamp(governanceSignals, 0, 4));
+    score += (static_cast<double>(std::clamp(governanceSignals, 0, 8)) / 8.0) * 4.0;
     score -= static_cast<double>(std::min(detectedArtifacts, 20)) * 0.5;
     return std::clamp(static_cast<int>(std::lround(score)), 0, 100);
 }
@@ -563,6 +612,7 @@ int computeVibeRiskScore(
     if (!hasDdd) risk += 10;
     if (!hasDai) risk += 6;
     if (governanceSignals == 0) risk += 8;
+    else if (governanceSignals <= 2) risk += 4;
     if (!hasCi) risk += 8;
     if (!hasTests) risk += 10;
     if (!hasStrictWarnings) risk += 5;
@@ -582,6 +632,139 @@ std::string escapeCsvField(const std::string& value) {
     out.push_back('"');
     return out;
 }
+
+}
+
+AppUI::RepoInventoryEntry AppUI::buildRepoInventoryEntry(const std::string& repoPathString) const {
+    const fs::path repoPath(repoPathString);
+    RepoInventoryEntry item;
+    item.path = repoPath.string();
+    item.name = repoPath.filename().string().empty() ? repoPath.string() : repoPath.filename().string();
+    const std::vector<std::string> repoFiles = listRepoFiles(repoPath);
+    item.hasReadme = hasAnyFile(repoPath, {"README.md", "README", "readme.md"});
+    item.hasCi = hasCiConfig(repoPath);
+    item.hasTests = hasTestsLayout(repoPath);
+    item.hasGitignore = fs::exists(repoPath / ".gitignore");
+    item.hasLicense = hasAnyFile(repoPath, {"LICENSE", "LICENSE.md", "COPYING"});
+    item.buildSystem = detectBuildSystem(repoPath);
+    item.detectedArtifacts = countTrackedArtifacts(repoPath);
+    if (item.detectedArtifacts < 0) {
+        item.detectedArtifacts = countPotentialArtifacts(repoPath);
+    }
+
+    const bool hasBuild = item.buildSystem != "Unknown";
+    item.scoreOperational = computeRepoHealthScore(
+        item.hasReadme,
+        item.hasCi,
+        item.hasTests,
+        hasBuild,
+        item.hasGitignore,
+        item.hasLicense,
+        item.detectedArtifacts
+    );
+    item.hasAdr = hasAdrEvidence(repoPath);
+    item.hasDdd = hasDddEvidence(repoPath);
+    item.hasDai = hasDaiEvidence(repoPath);
+    item.hasPolicies = hasPoliciesEvidence(repoPath);
+    item.hasToolContracts = hasToolContractsEvidence(repoPath);
+    item.hasApprovalPolicy = hasApprovalPolicyEvidence(repoPath);
+    item.hasAuditEvidence = hasAuditEvidence(repoPath);
+    item.governanceSignals = governanceSignalsCount(repoPath);
+    item.hasGovernance = item.governanceSignals > 0;
+    item.scoreMaturity = computeMaturityScore(item.hasAdr, item.hasDdd, item.hasDai, item.governanceSignals);
+
+    const bool hasAddressSan = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"-fsanitize=address"});
+    const bool hasUndefSan = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"-fsanitize=undefined"});
+    const bool hasCombinedSan = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {
+        "-fsanitize=address,undefined", "-fsanitize=undefined,address", "address,undefined", "undefined,address"
+    });
+    item.hasAsanUbsan = hasCombinedSan || (hasAddressSan && hasUndefSan);
+    item.hasLeakCheck = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"valgrind", "lsan_options", "detect_leaks=1", "asan_options=detect_leaks=1"});
+    item.hasStaticAnalysis = fs::exists(repoPath / ".clang-tidy")
+        || repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"clang-tidy", "cppcheck"});
+    const bool hasWall = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"-wall"});
+    const bool hasWextra = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"-wextra"});
+    const bool hasWpedantic = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"-wpedantic"});
+    const bool hasWerror = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"-werror"});
+    item.hasStrictWarnings = hasWall && hasWextra && (hasWpedantic || hasWerror);
+    item.hasComplexityGuard = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"lizard", "oclint", "function-size", "cyclomatic", "cognitive complexity"});
+    item.hasCycleGuard = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"include-cycle", "dependency cycle", "cycle check", "deptrac", "module deps"});
+    item.hasFormatLint = fs::exists(repoPath / ".clang-format")
+        || repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"clang-format", "format-check"});
+    item.scoreReliability = computeReliabilityScore(
+        item.hasAsanUbsan,
+        item.hasLeakCheck,
+        item.hasStaticAnalysis,
+        item.hasStrictWarnings,
+        item.hasComplexityGuard,
+        item.hasCycleGuard,
+        item.hasFormatLint
+    );
+
+    item.hasAsanUbsanExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {
+        "-fsanitize=address,undefined", "-fsanitize=undefined,address", "-fsanitize=address", "-fsanitize=undefined"
+    });
+    item.hasLeakCheckExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {
+        "valgrind", "detect_leaks=1", "lsan_options"
+    });
+    item.hasStaticAnalysisExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"clang-tidy", "cppcheck"});
+    const bool hasWallExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"-wall"});
+    const bool hasWextraExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"-wextra"});
+    const bool hasWpedanticExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"-wpedantic"});
+    const bool hasWerrorExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"-werror"});
+    item.hasStrictWarningsExec = hasWallExec && hasWextraExec && (hasWpedanticExec || hasWerrorExec);
+    item.hasComplexityGuardExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"lizard", "oclint", "cyclomatic", "cognitive complexity"});
+    item.hasCycleGuardExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"include-cycle", "dependency cycle", "cycle check", "deptrac", "module deps"});
+    item.hasFormatLintExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"clang-format", "format-check"});
+    item.scoreReliabilityExec = computeReliabilityScore(
+        item.hasAsanUbsanExec,
+        item.hasLeakCheckExec,
+        item.hasStaticAnalysisExec,
+        item.hasStrictWarningsExec,
+        item.hasComplexityGuardExec,
+        item.hasCycleGuardExec,
+        item.hasFormatLintExec
+    );
+    item.scoreEngineeringDiscipline = computeEngineeringDisciplineScore(
+        item.scoreOperational,
+        item.scoreMaturity,
+        item.scoreReliability,
+        item.scoreReliabilityExec,
+        item.hasAdr,
+        item.hasDdd,
+        item.hasDai,
+        item.governanceSignals,
+        item.detectedArtifacts
+    );
+    item.scoreVibeRisk = computeVibeRiskScore(
+        item.scoreEngineeringDiscipline,
+        item.hasAdr,
+        item.hasDdd,
+        item.hasDai,
+        item.governanceSignals,
+        item.hasCi,
+        item.hasTests,
+        item.hasStrictWarnings,
+        item.hasComplexityGuard,
+        item.hasCycleGuard,
+        item.detectedArtifacts
+    );
+
+    item.scoreTotal = computeCompositeScore(
+        item.scoreOperational,
+        item.scoreMaturity,
+        item.scoreReliability,
+        item.scoreReliabilityExec
+    );
+
+    for (const auto& p : m_store.getAll()) {
+        if (pathEqualsBestEffort(p.source_path, item.path)) {
+            item.integratedWithLabGestao = true;
+            break;
+        }
+    }
+
+    return item;
 }
 
 AppUI::AppUI(
@@ -664,6 +847,8 @@ void AppUI::applyTheme() {
 }
 
 void AppUI::render() {
+    processPendingGovernanceRefresh();
+    processPendingInventoryScan();
     if (!m_themeApplied) { applyTheme(); m_themeApplied = true; }
     ImGuiIO& io = ImGui::GetIO();
 
@@ -687,6 +872,9 @@ void AppUI::render() {
             }
             if (ImGui::MenuItem("Reclassificar Kanban (Auto)")) {
                 reclassifyKanbanAuto();
+            }
+            if (ImGui::MenuItem("Atualizar Governance Profiles")) {
+                refreshGovernanceProfiles();
             }
             ImGui::Separator();
             if (ImGui::MenuItem("Abrir pasta de dados")) {
@@ -1018,6 +1206,68 @@ void AppUI::reclassifyKanbanAuto() {
         << result.unchanged << " sem mudanca, "
         << result.skipped << " ignorado(s).";
     m_toolsMessage = msg.str();
+}
+
+void AppUI::refreshGovernanceProfiles() {
+    if (m_governanceRefreshRunning) {
+        m_toolsMessage = "Atualizacao de Governance Profiles ja esta em andamento.";
+        return;
+    }
+
+    m_pendingGovernanceProjectIds.clear();
+    m_pendingGovernanceProjectIds.reserve(m_store.getAll().size());
+    for (const auto& project : m_store.getAll()) {
+        m_pendingGovernanceProjectIds.push_back(project.id);
+    }
+    m_pendingGovernanceIndex = 0;
+    m_pendingGovernanceChanged = 0;
+    m_governanceRefreshRunning = !m_pendingGovernanceProjectIds.empty();
+
+    if (!m_governanceRefreshRunning) {
+        m_toolsMessage = "Nenhum projeto disponivel para atualizar Governance Profiles.";
+        return;
+    }
+
+    std::ostringstream msg;
+    msg << "Atualizando Governance Profiles: 0/" << m_pendingGovernanceProjectIds.size();
+    m_toolsMessage = msg.str();
+}
+
+void AppUI::processPendingGovernanceRefresh() {
+    if (!m_governanceRefreshRunning) return;
+
+    const auto started = std::chrono::steady_clock::now();
+    constexpr auto kBudget = std::chrono::milliseconds(8);
+
+    while (m_pendingGovernanceIndex < m_pendingGovernanceProjectIds.size()) {
+        if (application::refreshProjectGovernance(m_store, m_pendingGovernanceProjectIds[m_pendingGovernanceIndex])) {
+            m_pendingGovernanceChanged++;
+        }
+        m_pendingGovernanceIndex++;
+
+        if ((std::chrono::steady_clock::now() - started) >= kBudget) {
+            break;
+        }
+    }
+
+    if (m_pendingGovernanceIndex >= m_pendingGovernanceProjectIds.size()) {
+        m_governanceRefreshRunning = false;
+        std::ostringstream doneMsg;
+        doneMsg << "Governance Profiles atualizados: " << m_pendingGovernanceChanged << " projeto(s) com mudanca.";
+        m_toolsMessage = doneMsg.str();
+        if (!m_repoInventory.empty() || !m_repoInventoryRoot.empty()) {
+            scanWorkspaceInventory();
+        }
+        m_pendingGovernanceProjectIds.clear();
+        m_pendingGovernanceIndex = 0;
+        m_pendingGovernanceChanged = 0;
+        return;
+    }
+
+    std::ostringstream progressMsg;
+    progressMsg << "Atualizando Governance Profiles: "
+                << m_pendingGovernanceIndex << "/" << m_pendingGovernanceProjectIds.size();
+    m_toolsMessage = progressMsg.str();
 }
 
 void AppUI::renderPlanningTab() {
@@ -1490,6 +1740,11 @@ bool AppUI::exportExecutiveReport(std::string* outputPath, std::string* errorMsg
 }
 
 void AppUI::scanWorkspaceInventory() {
+    if (m_repoInventoryScanRunning) {
+        m_repoInventoryMessage = "Reescaneamento do inventario ja esta em andamento.";
+        return;
+    }
+
     const std::string workspace = std::strlen(m_workspaceRootBuf) > 0
         ? std::string(m_workspaceRootBuf)
         : fs::current_path().string();
@@ -1505,164 +1760,104 @@ void AppUI::scanWorkspaceInventory() {
         return;
     }
 
-    m_repoInventory.clear();
     m_repoInventoryRoot = root.string();
 
     std::vector<fs::path> candidates;
-    if (fs::exists(root / ".git")) candidates.push_back(root);
+    std::unordered_set<std::string> seenCandidates;
+    const auto registerCandidate = [&](const fs::path& candidate) {
+        std::error_code localEc;
+        if (!fs::exists(candidate, localEc) || !fs::is_directory(candidate, localEc)) return;
+
+        fs::path normalized = fs::weakly_canonical(candidate, localEc);
+        if (localEc) {
+            localEc.clear();
+            normalized = fs::absolute(candidate, localEc);
+        }
+        if (localEc) normalized = candidate.lexically_normal();
+
+        const std::string key = normalized.lexically_normal().string();
+        if (!seenCandidates.insert(key).second) return;
+        candidates.push_back(normalized);
+    };
+
+    if (isInventoryCandidateFolder(root)) registerCandidate(root);
     for (const auto& entry : fs::directory_iterator(root, fs::directory_options::skip_permission_denied, ec)) {
         if (!entry.is_directory(ec)) continue;
         const fs::path candidate = entry.path();
-        if (fs::exists(candidate / ".git")) candidates.push_back(candidate);
+        if (isInventoryCandidateFolder(candidate)) registerCandidate(candidate);
     }
 
+    for (const auto& project : m_store.getAll()) {
+        if (project.source_path.empty()) continue;
+        registerCandidate(project.source_path);
+    }
+
+    m_pendingRepoInventoryCandidates.clear();
+    m_pendingRepoInventoryCandidates.reserve(candidates.size());
     for (const auto& repoPath : candidates) {
-        RepoInventoryEntry item;
-        item.path = repoPath.string();
-        item.name = repoPath.filename().string().empty() ? repoPath.string() : repoPath.filename().string();
-        const std::vector<std::string> repoFiles = listRepoFiles(repoPath);
-        item.hasReadme = hasAnyFile(repoPath, {"README.md", "README", "readme.md"});
-        item.hasCi = hasCiConfig(repoPath);
-        item.hasTests = hasTestsLayout(repoPath);
-        item.hasGitignore = fs::exists(repoPath / ".gitignore");
-        item.hasLicense = hasAnyFile(repoPath, {"LICENSE", "LICENSE.md", "COPYING"});
-        item.buildSystem = detectBuildSystem(repoPath);
-        item.detectedArtifacts = countTrackedArtifacts(repoPath);
-        if (item.detectedArtifacts < 0) {
-            item.detectedArtifacts = countPotentialArtifacts(repoPath);
-        }
-
-        const bool hasBuild = item.buildSystem != "Unknown";
-        item.scoreOperational = computeRepoHealthScore(
-            item.hasReadme,
-            item.hasCi,
-            item.hasTests,
-            hasBuild,
-            item.hasGitignore,
-            item.hasLicense,
-            item.detectedArtifacts
-        );
-        item.hasAdr = hasAdrEvidence(repoPath);
-        item.hasDdd = hasDddEvidence(repoPath);
-        item.hasDai = hasDaiEvidence(repoPath);
-        item.governanceSignals = governanceSignalsCount(repoPath);
-        item.hasGovernance = item.governanceSignals > 0;
-        item.scoreMaturity = computeMaturityScore(item.hasAdr, item.hasDdd, item.hasDai, item.governanceSignals);
-
-        const bool hasAddressSan = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"-fsanitize=address"});
-        const bool hasUndefSan = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"-fsanitize=undefined"});
-        const bool hasCombinedSan = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {
-            "-fsanitize=address,undefined", "-fsanitize=undefined,address", "address,undefined", "undefined,address"
-        });
-        item.hasAsanUbsan = hasCombinedSan || (hasAddressSan && hasUndefSan);
-        item.hasLeakCheck = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"valgrind", "lsan_options", "detect_leaks=1", "asan_options=detect_leaks=1"});
-        item.hasStaticAnalysis = fs::exists(repoPath / ".clang-tidy")
-            || repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"clang-tidy", "cppcheck"});
-        const bool hasWall = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"-wall"});
-        const bool hasWextra = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"-wextra"});
-        const bool hasWpedantic = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"-wpedantic"});
-        const bool hasWerror = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"-werror"});
-        item.hasStrictWarnings = hasWall && hasWextra && (hasWpedantic || hasWerror);
-        item.hasComplexityGuard = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"lizard", "oclint", "function-size", "cyclomatic", "cognitive complexity"});
-        item.hasCycleGuard = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"include-cycle", "dependency cycle", "cycle check", "deptrac", "module deps"});
-        item.hasFormatLint = fs::exists(repoPath / ".clang-format")
-            || repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"clang-format", "format-check"});
-        item.scoreReliability = computeReliabilityScore(
-            item.hasAsanUbsan,
-            item.hasLeakCheck,
-            item.hasStaticAnalysis,
-            item.hasStrictWarnings,
-            item.hasComplexityGuard,
-            item.hasCycleGuard,
-            item.hasFormatLint
-        );
-
-        item.hasAsanUbsanExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {
-            "-fsanitize=address,undefined", "-fsanitize=undefined,address", "-fsanitize=address", "-fsanitize=undefined"
-        });
-        item.hasLeakCheckExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {
-            "valgrind", "detect_leaks=1", "lsan_options"
-        });
-        item.hasStaticAnalysisExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"clang-tidy", "cppcheck"});
-        const bool hasWallExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"-wall"});
-        const bool hasWextraExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"-wextra"});
-        const bool hasWpedanticExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"-wpedantic"});
-        const bool hasWerrorExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"-werror"});
-        item.hasStrictWarningsExec = hasWallExec && hasWextraExec && (hasWpedanticExec || hasWerrorExec);
-        item.hasComplexityGuardExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"lizard", "oclint", "cyclomatic", "cognitive complexity"});
-        item.hasCycleGuardExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"include-cycle", "dependency cycle", "cycle check", "deptrac", "module deps"});
-        item.hasFormatLintExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"clang-format", "format-check"});
-        item.scoreReliabilityExec = computeReliabilityScore(
-            item.hasAsanUbsanExec,
-            item.hasLeakCheckExec,
-            item.hasStaticAnalysisExec,
-            item.hasStrictWarningsExec,
-            item.hasComplexityGuardExec,
-            item.hasCycleGuardExec,
-            item.hasFormatLintExec
-        );
-        item.scoreEngineeringDiscipline = computeEngineeringDisciplineScore(
-            item.scoreOperational,
-            item.scoreMaturity,
-            item.scoreReliability,
-            item.scoreReliabilityExec,
-            item.hasAdr,
-            item.hasDdd,
-            item.hasDai,
-            item.governanceSignals,
-            item.detectedArtifacts
-        );
-        item.scoreVibeRisk = computeVibeRiskScore(
-            item.scoreEngineeringDiscipline,
-            item.hasAdr,
-            item.hasDdd,
-            item.hasDai,
-            item.governanceSignals,
-            item.hasCi,
-            item.hasTests,
-            item.hasStrictWarnings,
-            item.hasComplexityGuard,
-            item.hasCycleGuard,
-            item.detectedArtifacts
-        );
-
-        item.scoreTotal = computeCompositeScore(
-            item.scoreOperational,
-            item.scoreMaturity,
-            item.scoreReliability,
-            item.scoreReliabilityExec
-        );
-
-        for (const auto& p : m_store.getAll()) {
-            if (pathEqualsBestEffort(p.source_path, item.path)) {
-                item.integratedWithLabGestao = true;
-                break;
-            }
-        }
-
-        m_repoInventory.push_back(std::move(item));
+        m_pendingRepoInventoryCandidates.push_back(repoPath.string());
     }
-
-    std::sort(m_repoInventory.begin(), m_repoInventory.end(), [](const RepoInventoryEntry& a, const RepoInventoryEntry& b) {
-        if (a.scoreTotal != b.scoreTotal) return a.scoreTotal > b.scoreTotal;
-        if (a.scoreOperational != b.scoreOperational) return a.scoreOperational > b.scoreOperational;
-        return a.name < b.name;
-    });
-
-    if (!m_repoSelectedPath.empty()) {
-        bool found = false;
-        for (const auto& item : m_repoInventory) {
-            if (item.path == m_repoSelectedPath) {
-                found = true;
-                break;
-            }
-        }
-        if (!found) m_repoSelectedPath.clear();
-    }
+    m_pendingRepoInventoryEntries.clear();
+    m_pendingRepoInventoryEntries.reserve(m_pendingRepoInventoryCandidates.size());
+    m_pendingRepoInventoryIndex = 0;
+    m_repoInventoryScanRunning = true;
 
     std::ostringstream msg;
-    msg << "Inventario atualizado: " << m_repoInventory.size() << " repo(s) em " << m_repoInventoryRoot;
+    msg << "Atualizando inventario: 0/" << m_pendingRepoInventoryCandidates.size();
     m_repoInventoryMessage = msg.str();
+}
+
+void AppUI::processPendingInventoryScan() {
+    if (!m_repoInventoryScanRunning) return;
+
+    const auto started = std::chrono::steady_clock::now();
+    constexpr auto kBudget = std::chrono::milliseconds(8);
+
+    while (m_pendingRepoInventoryIndex < m_pendingRepoInventoryCandidates.size()) {
+        m_pendingRepoInventoryEntries.push_back(
+            buildRepoInventoryEntry(m_pendingRepoInventoryCandidates[m_pendingRepoInventoryIndex])
+        );
+        m_pendingRepoInventoryIndex++;
+
+        if ((std::chrono::steady_clock::now() - started) >= kBudget) {
+            break;
+        }
+    }
+
+    if (m_pendingRepoInventoryIndex >= m_pendingRepoInventoryCandidates.size()) {
+        m_repoInventory = std::move(m_pendingRepoInventoryEntries);
+        std::sort(m_repoInventory.begin(), m_repoInventory.end(), [](const RepoInventoryEntry& a, const RepoInventoryEntry& b) {
+            if (a.scoreTotal != b.scoreTotal) return a.scoreTotal > b.scoreTotal;
+            if (a.scoreOperational != b.scoreOperational) return a.scoreOperational > b.scoreOperational;
+            return a.name < b.name;
+        });
+
+        if (!m_repoSelectedPath.empty()) {
+            bool found = false;
+            for (const auto& item : m_repoInventory) {
+                if (item.path == m_repoSelectedPath) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) m_repoSelectedPath.clear();
+        }
+
+        m_repoInventoryScanRunning = false;
+        m_pendingRepoInventoryCandidates.clear();
+        m_pendingRepoInventoryEntries.clear();
+        m_pendingRepoInventoryIndex = 0;
+
+        std::ostringstream msg;
+        msg << "Inventario atualizado: " << m_repoInventory.size() << " repo(s) em " << m_repoInventoryRoot;
+        m_repoInventoryMessage = msg.str();
+        return;
+    }
+
+    std::ostringstream progressMsg;
+    progressMsg << "Atualizando inventario: "
+                << m_pendingRepoInventoryIndex << "/" << m_pendingRepoInventoryCandidates.size();
+    m_repoInventoryMessage = progressMsg.str();
 }
 
 void AppUI::renderInventoryTab() {
@@ -1671,10 +1866,19 @@ void AppUI::renderInventoryTab() {
     }
 
     ImGui::TextDisabled("Workspace: %s", m_repoInventoryRoot.empty() ? "(nao definido)" : m_repoInventoryRoot.c_str());
+    if (m_repoInventoryScanRunning) ImGui::BeginDisabled();
     if (ImGui::Button("Reescanear")) {
         scanWorkspaceInventory();
     }
+    if (m_repoInventoryScanRunning) ImGui::EndDisabled();
     ImGui::SameLine();
+    if (m_governanceRefreshRunning) ImGui::BeginDisabled();
+    if (ImGui::Button("Atualizar Governance Profiles")) {
+        refreshGovernanceProfiles();
+    }
+    if (m_governanceRefreshRunning) ImGui::EndDisabled();
+    ImGui::SameLine();
+    if (m_repoInventoryScanRunning) ImGui::BeginDisabled();
     if (ImGui::Button("Exportar CSV")) {
         std::string outPath;
         std::string err;
@@ -1684,7 +1888,9 @@ void AppUI::renderInventoryTab() {
             m_repoInventoryMessage = "Falha ao exportar inventario CSV: " + err;
         }
     }
+    if (m_repoInventoryScanRunning) ImGui::EndDisabled();
     ImGui::SameLine();
+    if (m_repoInventoryScanRunning) ImGui::BeginDisabled();
     if (ImGui::Button("Exportar JSON")) {
         std::string outPath;
         std::string err;
@@ -1694,6 +1900,7 @@ void AppUI::renderInventoryTab() {
             m_repoInventoryMessage = "Falha ao exportar inventario JSON: " + err;
         }
     }
+    if (m_repoInventoryScanRunning) ImGui::EndDisabled();
     ImGui::SameLine();
     ImGui::SetNextItemWidth(220.f);
     ImGui::InputTextWithHint("##repo_search", "Filtrar repo...", m_repoSearchBuf, sizeof(m_repoSearchBuf));
@@ -1716,6 +1923,11 @@ void AppUI::renderInventoryTab() {
 
     if (!m_repoInventoryMessage.empty()) {
         ImGui::TextWrapped("%s", m_repoInventoryMessage.c_str());
+    }
+    if (m_repoInventoryScanRunning && !m_pendingRepoInventoryCandidates.empty()) {
+        const float progress = static_cast<float>(m_pendingRepoInventoryIndex)
+            / static_cast<float>(m_pendingRepoInventoryCandidates.size());
+        ImGui::ProgressBar(progress, ImVec2(-1.f, 0.f));
     }
     ImGui::Separator();
 
@@ -1894,7 +2106,7 @@ void AppUI::renderInventoryTab() {
             ImGui::TableSetColumnIndex(9); ImGui::TextUnformatted(item->hasAdr ? "OK" : "-");
             ImGui::TableSetColumnIndex(10); ImGui::TextUnformatted(item->hasDdd ? "OK" : "-");
             ImGui::TableSetColumnIndex(11); ImGui::TextUnformatted(item->hasDai ? "OK" : "-");
-            ImGui::TableSetColumnIndex(12); ImGui::Text("%d/4", item->governanceSignals);
+            ImGui::TableSetColumnIndex(12); ImGui::Text("%d/8", item->governanceSignals);
             ImGui::TableSetColumnIndex(13); ImGui::TextUnformatted(item->hasAsanUbsan ? "OK" : "-");
             ImGui::TableSetColumnIndex(14); ImGui::TextUnformatted(item->hasLeakCheck ? "OK" : "-");
             ImGui::TableSetColumnIndex(15); ImGui::TextUnformatted(item->hasStaticAnalysis ? "OK" : "-");
@@ -1946,7 +2158,11 @@ void AppUI::renderInventoryTab() {
             ImGui::BulletText("ADR: %s", selected->hasAdr ? "OK" : "-");
             ImGui::BulletText("DDD: %s", selected->hasDdd ? "OK" : "-");
             ImGui::BulletText("DAI: %s", selected->hasDai ? "OK" : "-");
-            ImGui::BulletText("Governanca: %d/4", selected->governanceSignals);
+            ImGui::BulletText("Policies: %s", selected->hasPolicies ? "OK" : "-");
+            ImGui::BulletText("Tool Contracts: %s", selected->hasToolContracts ? "OK" : "-");
+            ImGui::BulletText("Approval Matrix: %s", selected->hasApprovalPolicy ? "OK" : "-");
+            ImGui::BulletText("Audit/Evidence: %s", selected->hasAuditEvidence ? "OK" : "-");
+            ImGui::BulletText("Governanca: %d/8", selected->governanceSignals);
             ImGui::Separator();
             ImGui::TextDisabled("Confiabilidade");
             ImGui::BulletText("ASan/UBSan: %s", selected->hasAsanUbsan ? "OK" : "-");
@@ -2006,7 +2222,7 @@ void AppUI::renderInventoryTab() {
     ImGui::TextDisabled("Disciplina: leitura sintetica de arquitetura, governanca, confiabilidade e operacao.");
     ImGui::TextDisabled("Vibe Risk: proxy do quanto o projeto depende de improviso, baixa rastreabilidade e pouca validacao.");
     ImGui::TextDisabled("Operacional: README(20)+CI(20)+Testes(15)+Build(20)+Gitignore(10)+License(5)+SemArtefatos(10)");
-    ImGui::TextDisabled("Maturidade: ADR(25)+DDD(25)+DAI(25)+Governanca(0..25 via 0..4 sinais)");
+    ImGui::TextDisabled("Maturidade: ADR(25)+DDD(25)+DAI(25)+Governanca(0..25 via 0..8 sinais)");
     ImGui::TextDisabled("Confiabilidade (Config/Exec): ASan/UBSan(15)+Leak(10)+Static(20)+Warnings(15)+Complex(15)+Cycles(10)+Format(15)");
     ImGui::TextDisabled("Total: Operacional*0.45 + Maturidade*0.30 + ConfiabCfg*0.15 + ConfiabExec*0.10");
 }
@@ -2025,7 +2241,11 @@ std::vector<std::string> AppUI::generateActionPlanForRepo(const RepoInventoryEnt
     if (!repo.hasAdr) plan.push_back("Registrar ao menos 1 ADR sobre decisoes estruturais atuais.");
     if (!repo.hasDdd) plan.push_back("Criar documento DDD basico (contexto, limites, linguagem ubíqua).");
     if (!repo.hasDai) plan.push_back("Abrir backlog DAI com donos e status para riscos/acoes.");
-    if (repo.governanceSignals == 0) plan.push_back("Adicionar governanca minima: CONTRIBUTING, templates PR/Issue e CODEOWNERS.");
+    if (repo.governanceSignals == 0) plan.push_back("Adicionar governanca minima: CONTRIBUTING, templates PR/Issue, CODEOWNERS, policies e contratos de ferramenta.");
+    if (!repo.hasPolicies) plan.push_back("Versionar policies explicitas para uso de IA, seguranca e fronteiras de contexto.");
+    if (!repo.hasToolContracts) plan.push_back("Criar contratos executaveis para ferramentas/agentes e validar precondicoes/evidencias.");
+    if (!repo.hasApprovalPolicy) plan.push_back("Formalizar matriz de aprovacao proporcional ao risco e aos contextos criticos.");
+    if (!repo.hasAuditEvidence) plan.push_back("Padronizar evidencias de auditoria: task packet, evidence log e validador de governanca.");
 
     if (!repo.hasAsanUbsan) plan.push_back("Adicionar job com ASan/UBSan para detectar memoria/comportamento indefinido.");
     if (!repo.hasLeakCheck) plan.push_back("Adicionar leak check (ASan leak detector ou valgrind) em CI noturno.");
@@ -2059,7 +2279,7 @@ bool AppUI::exportInventoryCsv(std::string* outputPath, std::string* errorMsg) c
         return false;
     }
 
-    out << "repo,path,score_total,score_engineering_discipline,score_vibe_risk,score_operational,score_maturity,score_reliability_config,score_reliability_exec,build,adr,ddd,dai,governance_signals,asan_ubsan_cfg,leak_check_cfg,static_analysis_cfg,strict_warnings_cfg,complexity_guard_cfg,cycle_guard_cfg,format_lint_cfg,asan_ubsan_exec,leak_check_exec,static_analysis_exec,strict_warnings_exec,complexity_guard_exec,cycle_guard_exec,format_lint_exec,readme,ci,tests,gitignore,license,artifacts,integrated\n";
+    out << "repo,path,score_total,score_engineering_discipline,score_vibe_risk,score_operational,score_maturity,score_reliability_config,score_reliability_exec,build,adr,ddd,dai,policies,tool_contracts,approval_policy,audit_evidence,governance_signals,asan_ubsan_cfg,leak_check_cfg,static_analysis_cfg,strict_warnings_cfg,complexity_guard_cfg,cycle_guard_cfg,format_lint_cfg,asan_ubsan_exec,leak_check_exec,static_analysis_exec,strict_warnings_exec,complexity_guard_exec,cycle_guard_exec,format_lint_exec,readme,ci,tests,gitignore,license,artifacts,integrated\n";
     for (const auto& item : m_repoInventory) {
         out << escapeCsvField(item.name) << ","
             << escapeCsvField(item.path) << ","
@@ -2074,6 +2294,10 @@ bool AppUI::exportInventoryCsv(std::string* outputPath, std::string* errorMsg) c
             << (item.hasAdr ? "1" : "0") << ","
             << (item.hasDdd ? "1" : "0") << ","
             << (item.hasDai ? "1" : "0") << ","
+            << (item.hasPolicies ? "1" : "0") << ","
+            << (item.hasToolContracts ? "1" : "0") << ","
+            << (item.hasApprovalPolicy ? "1" : "0") << ","
+            << (item.hasAuditEvidence ? "1" : "0") << ","
             << item.governanceSignals << ","
             << (item.hasAsanUbsan ? "1" : "0") << ","
             << (item.hasLeakCheck ? "1" : "0") << ","
@@ -2137,6 +2361,10 @@ bool AppUI::exportInventoryJson(std::string* outputPath, std::string* errorMsg) 
             {"adr", item.hasAdr},
             {"ddd", item.hasDdd},
             {"dai", item.hasDai},
+            {"policies", item.hasPolicies},
+            {"tool_contracts", item.hasToolContracts},
+            {"approval_policy", item.hasApprovalPolicy},
+            {"audit_evidence", item.hasAuditEvidence},
             {"governance_signals", item.governanceSignals},
             {"asan_ubsan_cfg", item.hasAsanUbsan},
             {"leak_check_cfg", item.hasLeakCheck},

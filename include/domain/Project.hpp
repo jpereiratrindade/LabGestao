@@ -70,6 +70,25 @@ struct Project {
         std::string moved_at;
     };
 
+    struct GovernanceProfile {
+        bool analyzed{false};
+        std::string analyzed_at;
+        std::string analyzed_path;
+        bool path_available{false};
+        bool has_adr{false};
+        bool has_ddd{false};
+        bool has_dai{false};
+        bool has_policies{false};
+        bool has_tool_contracts{false};
+        bool has_approval_policy{false};
+        bool has_audit_evidence{false};
+        int governance_signals{0}; // 0..8
+        int maturity_score{0};     // 0..100
+        int vibe_risk{0};          // 0..100
+        std::string maturity_label;
+        std::vector<std::string> next_actions;
+    };
+
     std::string id;
     std::string name;
     std::string description;
@@ -89,6 +108,7 @@ struct Project {
     std::vector<AdrEntry> adrs;
     std::vector<DaiEntry> dais;
     std::vector<StatusTransition> status_history;
+    GovernanceProfile governance_profile;
 };
 
 } // namespace labgestao
