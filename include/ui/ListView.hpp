@@ -47,6 +47,7 @@ private:
     int   m_formStatus{0};
     std::string m_formError;
     int   m_createTemplate{static_cast<int>(ProjectTemplate::Cpp)};
+    int   m_governedBootstrapMode{static_cast<int>(GovernedBootstrapMode::Standard)};
     bool  m_createOnDisk{true};
     bool  m_openPlanningAfterCreate{true};
     char  m_scaffoldBaseDir[512]{};

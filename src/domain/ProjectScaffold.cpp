@@ -108,7 +108,7 @@ fs::path resolveGovernanceScript(std::string* err) {
     return {};
 }
 
-ScaffoldResult createGovernedCppProject(const fs::path& projectDir) {
+ScaffoldResult createGovernedCppProject(const fs::path& projectDir, GovernedBootstrapMode mode) {
     ScaffoldResult result;
 
     std::string err;
@@ -118,7 +118,10 @@ ScaffoldResult createGovernedCppProject(const fs::path& projectDir) {
         return result;
     }
 
-    const std::string command = "bash " + shellQuote(scriptPath.string()) + " " + shellQuote(projectDir.string());
+    std::string command = "bash " + shellQuote(scriptPath.string()) + " " + shellQuote(projectDir.string());
+    if (mode == GovernedBootstrapMode::Gsdd) {
+        command += " --mode gsdd";
+    }
     const int rc = std::system(command.c_str());
     if (rc != 0) {
         result.message = "script de bootstrap governado falhou com codigo " + std::to_string(rc);
@@ -267,7 +270,7 @@ ScaffoldResult createProjectScaffold(const ScaffoldRequest& req) {
     const std::string packageName = slugify(projectName, true);
 
     if (req.templ == ProjectTemplate::GovernedCpp) {
-        return createGovernedCppProject(projectDir);
+        return createGovernedCppProject(projectDir, req.governedMode);
     }
 
     fs::create_directories(projectDir, ec);

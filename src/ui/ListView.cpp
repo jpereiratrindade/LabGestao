@@ -17,6 +17,10 @@ namespace fs = std::filesystem;
 
 static const char* kStatusLabels[] = { "Backlog", "Em Andamento", "Revisão", "Concluído", "Pausado" };
 static const char* kDaiKinds[] = { "Decision", "Action", "Impediment" };
+static const char* kGovernedBootstrapModeLabels[] = {
+    "Governanca base",
+    "Governanca + GSDD"
+};
 static const ImVec4 kStatusColors[] = {
     {0.45f, 0.35f, 0.75f, 1.f}, // Backlog   — roxo
     {0.20f, 0.60f, 0.90f, 1.f}, // Doing     — azul
@@ -62,6 +66,7 @@ void ListView::resetCreateForm() {
     m_formTags[0] = '\0';
     m_formStatus = 0;
     m_createOnDisk = true;
+    m_governedBootstrapMode = static_cast<int>(GovernedBootstrapMode::Standard);
     if ((m_createTemplate == static_cast<int>(ProjectTemplate::Cpp) ||
          m_createTemplate == static_cast<int>(ProjectTemplate::GovernedCpp)) &&
         !m_creationDefaults.cppRoot.empty()) {
@@ -839,7 +844,21 @@ void ListView::renderCreateModal() {
                     ImGui::TextDisabled("Diretorio final previsto: %s", previewPath.c_str());
                 }
                 if (selectedTemplate == ProjectTemplate::GovernedCpp) {
-                    ImGui::TextDisabled("Usa o script canônico init_ai_governance.sh para gerar o bootstrap.");
+                    ImGui::SetNextItemWidth(240.f);
+                    if (ImGui::BeginCombo("Modo governado", kGovernedBootstrapModeLabels[m_governedBootstrapMode])) {
+                        for (int i = 0; i < static_cast<int>(sizeof(kGovernedBootstrapModeLabels) / sizeof(kGovernedBootstrapModeLabels[0])); i++) {
+                            const bool selected = (m_governedBootstrapMode == i);
+                            if (ImGui::Selectable(kGovernedBootstrapModeLabels[i], selected)) {
+                                m_governedBootstrapMode = i;
+                            }
+                        }
+                        ImGui::EndCombo();
+                    }
+                    if (m_governedBootstrapMode == static_cast<int>(GovernedBootstrapMode::Gsdd)) {
+                        ImGui::TextDisabled("Gera artefatos extras de especificacao: SpecPacket, ExecutionPlan e Feedback.");
+                    } else {
+                        ImGui::TextDisabled("Usa o script canônico init_ai_governance.sh para gerar o bootstrap.");
+                    }
                 }
             }
         } else {
@@ -898,7 +917,13 @@ void ListView::renderCreateModal() {
                 if (p.tags.empty()) p.tags = {"Python", "Template"};
             } else if (selectedTemplate == ProjectTemplate::GovernedCpp) {
                 if (p.category.empty()) p.category = "C++ Governado";
-                if (p.tags.empty()) p.tags = {"C++", "Governanca", "Template"};
+                if (p.tags.empty()) {
+                    if (m_governedBootstrapMode == static_cast<int>(GovernedBootstrapMode::Gsdd)) {
+                        p.tags = {"C++", "Governanca", "GSDD", "Template"};
+                    } else {
+                        p.tags = {"C++", "Governanca", "Template"};
+                    }
+                }
             }
 
             if (duplicateSourceReason.has_value()) {
@@ -911,6 +936,7 @@ void ListView::renderCreateModal() {
             if (m_createOnDisk && selectedTemplate != ProjectTemplate::None) {
                 ScaffoldRequest req;
                 req.templ = selectedTemplate;
+                req.governedMode = static_cast<GovernedBootstrapMode>(m_governedBootstrapMode);
                 req.projectName = p.name;
                 req.baseDirectory = m_scaffoldBaseDir;
                 const auto scaffold = createProjectScaffold(req);

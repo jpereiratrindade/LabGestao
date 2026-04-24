@@ -4,6 +4,7 @@
 #include "domain/ProjectStore.hpp"
 
 #include <cmath>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -14,6 +15,7 @@ namespace fs = std::filesystem;
 using labgestao::Project;
 using labgestao::ProjectStatus;
 using labgestao::ProjectStore;
+using labgestao::GovernedBootstrapMode;
 using labgestao::ProjectTemplate;
 using labgestao::ScaffoldRequest;
 using labgestao::application::MonitoredRoot;
@@ -369,6 +371,45 @@ void testScaffold() {
         req.baseDirectory = base.string();
         const auto res = labgestao::createProjectScaffold(req);
         expect(res.ok, "None template should be accepted");
+    }
+
+    {
+        const fs::path governedBase = base / "governed";
+        fs::create_directories(governedBase);
+        const fs::path stubScript = governedBase / "stub_init_ai_governance.sh";
+        const fs::path argsFile = governedBase / "captured_args.txt";
+
+        std::ofstream(stubScript)
+            << "#!/usr/bin/env bash\n"
+            << "set -euo pipefail\n"
+            << "printf '%s\\n' \"$@\" > " << argsFile.string() << "\n"
+            << "mkdir -p \"$1\"\n";
+        fs::permissions(stubScript,
+                        fs::perms::owner_exec | fs::perms::owner_read | fs::perms::owner_write |
+                        fs::perms::group_exec | fs::perms::group_read |
+                        fs::perms::others_exec | fs::perms::others_read,
+                        fs::perm_options::add);
+
+        setenv("LABGESTAO_AI_GOV_SCRIPT", stubScript.string().c_str(), 1);
+
+        ScaffoldRequest req;
+        req.templ = ProjectTemplate::GovernedCpp;
+        req.governedMode = GovernedBootstrapMode::Gsdd;
+        req.projectName = "Gov Spec";
+        req.baseDirectory = governedBase.string();
+        const auto res = labgestao::createProjectScaffold(req);
+        expect(res.ok, "Governed GSDD scaffold should succeed");
+
+        std::ifstream in(argsFile);
+        std::vector<std::string> args;
+        for (std::string line; std::getline(in, line);) args.push_back(line);
+        expectEqInt(static_cast<int>(args.size()), 3, "Governed GSDD scaffold should pass project path and mode");
+        if (args.size() >= 3) {
+            expectEqStr(args[1], "--mode", "Governed GSDD scaffold should pass mode flag");
+            expectEqStr(args[2], "gsdd", "Governed GSDD scaffold should pass gsdd mode");
+        }
+
+        unsetenv("LABGESTAO_AI_GOV_SCRIPT");
     }
 
     std::error_code ec;

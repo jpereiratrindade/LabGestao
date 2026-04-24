@@ -11,8 +11,14 @@ enum class ProjectTemplate {
     GovernedCpp
 };
 
+enum class GovernedBootstrapMode {
+    Standard = 0,
+    Gsdd
+};
+
 struct ScaffoldRequest {
     ProjectTemplate templ{ProjectTemplate::None};
+    GovernedBootstrapMode governedMode{GovernedBootstrapMode::Standard};
     std::string projectName;
     std::string baseDirectory;
 };

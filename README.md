@@ -42,6 +42,20 @@ cd build-ninja
 - Configura o projeto com CMake em `build/` ou `build-ninja/`, conforme o gerador disponivel.
 - Compila o executavel `LabGestao`.
 
+## Build rapido com CMake paralelo
+
+Se voce ja tem as dependencias e quer apenas configurar/compilar com CMake em paralelo:
+
+```bash
+./build_parallel.sh
+```
+
+Opcoes uteis via ambiente:
+
+```bash
+BUILD_DIR=build-codex JOBS=12 BUILD_TYPE=Release ./build_parallel.sh
+```
+
 ## Dependencias
 
 - `cmake`
@@ -57,6 +71,7 @@ cd build-ninja
 Na tela `Projetos`, ao clicar em `+ Novo Projeto`, voce pode:
 
 - Escolher `Template`: `Nenhum`, `C++`, `Python` ou `C++ Governado`
+- Quando `C++ Governado` estiver selecionado, escolher `Modo governado`: `Governanca base` ou `Governanca + GSDD`
 - Marcar `Criar estrutura base no disco`
 - Informar o `Diretorio base` (ou usar o padrao)
 
@@ -65,6 +80,7 @@ Estrutura minima gerada:
 - `C++`: `CMakeLists.txt`, `README.md`, `.gitignore`, `src/main.cpp`, `include/`, `tests/`
 - `Python`: `pyproject.toml`, `README.md`, `.gitignore`, `src/<pacote>/`, `tests/test_smoke.py`
 - `C++ Governado`: bootstrap completo via `init_ai_governance.sh`, com `adr/`, `ddd/`, `policies/`, `mcp/contracts/`, `prompts/`, `examples/`, validadores e CI
+- `Governanca + GSDD`: adiciona `examples/spec_packet.md`, `examples/execution_plan.md`, `examples/feedback_log.md` e amplia os prompts de especificacao governada
 
 ## Governanca tecnica
 

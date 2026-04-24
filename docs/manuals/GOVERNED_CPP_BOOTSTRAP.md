@@ -26,6 +26,26 @@ O scaffold criado inclui:
   - `scripts/validate_tool_contracts.py`
   - `scripts/validate_governance_repo.py`
 
+## Modo `GSDD`
+
+No `LabGestao`, o template `C++ Governado` agora pode ser criado em dois modos:
+
+- `Governanca base`
+- `Governanca + GSDD`
+
+Quando `Governanca + GSDD` e selecionado, o bootstrap canônico adiciona artefatos extras de especificacao governada:
+
+- `examples/spec_packet.md`
+- `examples/execution_plan.md`
+- `examples/feedback_log.md`
+
+E amplia os prompts:
+
+- `prompts/task_template.md`
+- `prompts/governance_task_packet.md`
+
+Esse modo existe para quando o projeto precisa de uma camada explicita entre intencao e execucao, sem transformar a IA em decisora arquitetural.
+
 ## Artefatos principais
 
 ### Politicas
@@ -78,6 +98,12 @@ Esses artefatos ajudam a registrar:
    - `python3 scripts/validate_governance_repo.py`
    - `./scripts/run_quality.sh`
 
+Quando estiver em modo `GSDD`, recomenda-se tambem iniciar o trabalho por:
+
+1. `examples/spec_packet.md`
+2. `examples/execution_plan.md`
+3. `examples/feedback_log.md`
+
 ## Quando usar
 
 Use `C++ Governado` quando o repositorio precisar de:
@@ -86,5 +112,11 @@ Use `C++ Governado` quando o repositorio precisar de:
 - revisao proporcional ao risco
 - limites claros para agentes
 - enforcement minimo via contratos/validadores
+
+Use `Governanca + GSDD` quando, alem disso, o projeto precisar de:
+
+- transformar intencao em especificacao executavel antes de implementar
+- distinguir zona formal e zona adaptativa
+- manter um ciclo explicito entre especificacao, execucao e feedback
 
 Para prototipos simples, os templates `C++` ou `Python` podem ser suficientes.

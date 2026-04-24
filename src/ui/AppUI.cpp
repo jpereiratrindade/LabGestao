@@ -1688,27 +1688,107 @@ bool AppUI::exportExecutiveReport(std::string* outputPath, std::string* errorMsg
         return false;
     }
 
+    static constexpr std::array<int, 3> kWindows = {7, 14, 30};
+    const int safeMetricsPeriodIdx = std::clamp(m_metricsPeriodIdx, 0, static_cast<int>(kWindows.size()) - 1);
+    const int periodDays = kWindows[static_cast<std::size_t>(safeMetricsPeriodIdx)];
+    const auto globalMetrics = m_store.computeGlobalFlowMetrics(today, periodDays);
+
+    int statusCounts[5] = {0, 0, 0, 0, 0};
+    for (const auto& p : m_store.getAll()) {
+        const int idx = static_cast<int>(p.status);
+        if (idx >= 0 && idx < 5) statusCounts[idx]++;
+    }
+
     float avgTotal = 0.f, avgOper = 0.f, avgMatur = 0.f, avgConfiabCfg = 0.f, avgConfiabExec = 0.f;
+    float coverageCi = 0.f, coverageTests = 0.f, coverageAsan = 0.f, coverageStatic = 0.f, coverageFormat = 0.f;
     if (!m_repoInventory.empty()) {
+        int cCi = 0, cTests = 0, cAsan = 0, cStatic = 0, cFormat = 0;
         for (const auto& repo : m_repoInventory) {
             avgTotal += static_cast<float>(repo.scoreTotal);
             avgOper += static_cast<float>(repo.scoreOperational);
             avgMatur += static_cast<float>(repo.scoreMaturity);
             avgConfiabCfg += static_cast<float>(repo.scoreReliability);
             avgConfiabExec += static_cast<float>(repo.scoreReliabilityExec);
+            if (repo.hasCi) cCi++;
+            if (repo.hasTests) cTests++;
+            if (repo.hasAsanUbsan) cAsan++;
+            if (repo.hasStaticAnalysis) cStatic++;
+            if (repo.hasFormatLint) cFormat++;
         }
         const float n = static_cast<float>(m_repoInventory.size());
         avgTotal /= n; avgOper /= n; avgMatur /= n; avgConfiabCfg /= n; avgConfiabExec /= n;
+        coverageCi = (static_cast<float>(cCi) * 100.f) / n;
+        coverageTests = (static_cast<float>(cTests) * 100.f) / n;
+        coverageAsan = (static_cast<float>(cAsan) * 100.f) / n;
+        coverageStatic = (static_cast<float>(cStatic) * 100.f) / n;
+        coverageFormat = (static_cast<float>(cFormat) * 100.f) / n;
     }
+
+    float snapshotAvgTotal = 0.f;
+    std::string snapshotDate;
+    std::string snapshotErr;
+    const bool hasTrendSnapshot = loadLatestInventorySnapshotMetrics(&snapshotAvgTotal, &snapshotDate, &snapshotErr);
 
     out << "# Relatorio Executivo - LabGestao\n\n";
     out << "- Data: " << today << "\n";
+    out << "- Janela de metricas: " << periodDays << " dias\n";
+    out << "- Projetos monitorados: " << m_store.getAll().size() << "\n";
     out << "- Repos no inventario: " << m_repoInventory.size() << "\n";
     out << "- Media Total: " << std::fixed << std::setprecision(1) << avgTotal << "\n";
     out << "- Media Operacional: " << std::fixed << std::setprecision(1) << avgOper << "\n";
     out << "- Media Maturidade: " << std::fixed << std::setprecision(1) << avgMatur << "\n";
     out << "- Media Confiab (Config): " << std::fixed << std::setprecision(1) << avgConfiabCfg << "\n";
     out << "- Media Confiab (Exec): " << std::fixed << std::setprecision(1) << avgConfiabExec << "\n\n";
+
+    out << "## Indicadores Globais de Fluxo\n\n";
+    out << "- Projetos totais: " << globalMetrics.total_projects << "\n";
+    out << "- Projetos em WIP: " << globalMetrics.wip_projects << "\n";
+    out << "- Projetos concluidos: " << globalMetrics.done_projects << "\n";
+    out << "- Throughput (" << periodDays << " dias): " << globalMetrics.throughput_in_window << "\n";
+    out << "- Aging medio: " << std::fixed << std::setprecision(1) << globalMetrics.avg_aging_days << " dias\n";
+    out << "- Impedimentos abertos: " << globalMetrics.open_impediments << "\n\n";
+
+    out << "## Distribuicao por Status\n\n";
+    out << "- Backlog: " << statusCounts[static_cast<int>(ProjectStatus::Backlog)] << "\n";
+    out << "- Em Andamento: " << statusCounts[static_cast<int>(ProjectStatus::Doing)] << "\n";
+    out << "- Revisao: " << statusCounts[static_cast<int>(ProjectStatus::Review)] << "\n";
+    out << "- Concluido: " << statusCounts[static_cast<int>(ProjectStatus::Done)] << "\n";
+    out << "- Pausado: " << statusCounts[static_cast<int>(ProjectStatus::Paused)] << "\n\n";
+
+    out << "## Cobertura de Boas Praticas\n\n";
+    out << "- CI: " << std::fixed << std::setprecision(1) << coverageCi << "%\n";
+    out << "- Testes: " << std::fixed << std::setprecision(1) << coverageTests << "%\n";
+    out << "- ASan/UBSan: " << std::fixed << std::setprecision(1) << coverageAsan << "%\n";
+    out << "- Static Analysis: " << std::fixed << std::setprecision(1) << coverageStatic << "%\n";
+    out << "- Format/Lint: " << std::fixed << std::setprecision(1) << coverageFormat << "%\n\n";
+
+    out << "## Tendencia\n\n";
+    if (hasTrendSnapshot && !m_repoInventory.empty()) {
+        out << "- Ultimo snapshot: " << snapshotDate << "\n";
+        out << "- Media Total anterior: " << std::fixed << std::setprecision(1) << snapshotAvgTotal << "\n";
+        out << "- Variacao da Media Total: " << std::showpos << std::fixed << std::setprecision(1)
+            << (avgTotal - snapshotAvgTotal) << std::noshowpos << "\n\n";
+    } else {
+        out << "- Snapshot anterior indisponivel: "
+            << (snapshotErr.empty() ? "nenhum snapshot exportado" : snapshotErr) << "\n\n";
+    }
+
+    out << "## Metricas por Projeto\n\n";
+    out << "| Projeto | Status | Lead Time | Cycle Time | Aging | Transicoes | DAI Abertos | Impedimentos |\n";
+    out << "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |\n";
+    for (const auto& p : m_store.getAll()) {
+        const auto m = m_store.computeProjectFlowMetrics(p, today);
+        out << "| " << p.name
+            << " | " << statusToString(p.status)
+            << " | " << std::fixed << std::setprecision(1) << m.lead_time_days
+            << " | " << std::fixed << std::setprecision(1) << m.cycle_time_days
+            << " | " << std::fixed << std::setprecision(1) << m.aging_days
+            << " | " << m.status_transitions
+            << " | " << m.open_dai_items
+            << " | " << m.open_impediments
+            << " |\n";
+    }
+    out << "\n";
 
     out << "## Top 10 Criticos\n\n";
     const auto top10 = topCriticalRepos(10);
