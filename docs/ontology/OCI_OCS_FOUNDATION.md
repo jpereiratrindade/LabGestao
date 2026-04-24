@@ -11,6 +11,8 @@ O LabGestao tambem deve ser entendido como um ambiente laboratorial de analise, 
 
 Nesse sentido, `OCI` e `OCS` nao sao metricas isoladas. Elas expressam principios formais de observacao: o `OCI` observa como um sistema explicita entidades, relacoes, validade e identidade; o `OCS` observa como dois sistemas podem ser comparados, alinhados ou integrados a partir desses mesmos criterios. O LabGestao, portanto, opera como um laboratorio virtual de analise ontologica e estrutural de sistemas.
 
+O argumento conceitual amplo esta em `docs/labgestao_doc_base.md`. Este documento resume a aplicacao desse argumento especificamente para `OCI`, `OCS` e o produto.
+
 A referencia formal desta abordagem esta registrada em:
 
 - [OCI_OCS_FOUNDATION.tex](./OCI_OCS_FOUNDATION.tex)

@@ -4,6 +4,8 @@ Este documento consolida as metricas usadas pelo LabGestao para fluxo, inventari
 
 As metricas fazem parte de um contexto mais amplo: o LabGestao opera como ambiente laboratorial de analise, caracterizacao e avaliacao de sistemas. Ele observa repositorios, extrai sinais estruturais, cruza documentos com codigo, compara perfis e produz recomendacoes. Assim, indicadores como `OCI` e `OCS` nao sao apenas contagens; eles formalizam principios de observacao ontologica e estrutural aplicados a outros sistemas.
 
+O enquadramento conceitual completo esta em `docs/labgestao_doc_base.md`. Este manual deve permanecer como referencia operacional das metricas; ele deriva desse enquadramento, mas nao substitui DDD, ADR ou a fundamentacao formal de OCI/OCS.
+
 ## Escalas
 
 - Scores numericos usam escala `0..100`, salvo quando indicado.

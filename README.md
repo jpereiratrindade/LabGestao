@@ -84,6 +84,7 @@ Estrutura minima gerada:
 
 ## Governanca tecnica
 
+- Documento-base conceitual: `docs/labgestao_doc_base.md`
 - DDD: `docs/architecture/DDD.md`
 - DDD Ontology Profile: `docs/architecture/DDD_ONTOLOGY_PROFILE.md`
 - DDD Recommendation Engine: `docs/architecture/DDD_ONTOLOGY_RECOMMENDATION_ENGINE.md`

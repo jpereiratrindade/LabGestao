@@ -14,6 +14,7 @@ Formato recomendado:
 - Decision: tratar o LabGestao como ambiente laboratorial de analise, caracterizacao e avaliacao de sistemas, e nao apenas como sistema de gestao ou painel de metricas.
 - Decision: interpretar `OCI` e `OCS` como expressoes formais de observacao ontologica e estrutural, vinculadas ao papel analitico do LabGestao.
 - Action: registrar a decisao em `ADR-0008` e refletir a formulacao em `DDD.md`, `METRICS_REFERENCE.md` e nos documentos de fundamentacao ontologica.
+- Action: incorporar `docs/labgestao_doc_base.md` como documento-base conceitual, mantendo ADR, DDD, manual de metricas e fundamentacao OCI/OCS como especializacoes operacionais.
 - Action: usar o IdeaWalker como teste aplicado das recomendacoes geradas pelo LabGestao, mantendo OCS como frente de alinhamento conceitual entre repositorios.
 
 ### 2026-03-24

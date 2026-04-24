@@ -9,6 +9,8 @@ O LabGestao deixou de atuar apenas como sistema de gestao de projetos e passou a
 
 Essa mudanca exige uma definicao mais precisa do papel do proprio LabGestao. Chama-lo apenas de ferramenta de gestao ou painel de metricas reduz a natureza da solucao: o sistema tambem explicita criterios de observacao, compara estruturas, avalia maturidade, identifica compatibilidade e recomenda acoes.
 
+O documento-base conceitual desta decisao e `docs/labgestao_doc_base.md`. Esta ADR registra a decisao arquitetural derivada desse enquadramento, enquanto o documento-base preserva o argumento completo e pode ser usado como memoria conceitual, base para relatorios ou secao teorica.
+
 ## Decisao
 
 Tratar o LabGestao como um ambiente laboratorial de analise, caracterizacao e avaliacao de sistemas.
