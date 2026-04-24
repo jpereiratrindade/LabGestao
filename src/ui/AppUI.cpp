@@ -13,6 +13,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <set>
 #include <optional>
 #include <sstream>
 #include <string_view>
@@ -622,6 +623,406 @@ int computeVibeRiskScore(
     return std::clamp(risk, 0, 100);
 }
 
+void appendUniqueLower(std::vector<std::string>& items, const std::string& value) {
+    const std::string lowered = toLowerAscii(value);
+    if (lowered.empty()) return;
+    for (const auto& existing : items) {
+        if (existing == lowered) return;
+    }
+    items.push_back(lowered);
+}
+
+std::vector<std::string> extractCapitalizedTokens(const std::string& content) {
+    std::vector<std::string> result;
+    std::string token;
+    auto flushToken = [&]() {
+        if (token.size() >= 3 && std::isupper(static_cast<unsigned char>(token[0]))) {
+            appendUniqueLower(result, token);
+        }
+        token.clear();
+    };
+
+    for (char c : content) {
+        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-') token.push_back(c);
+        else flushToken();
+    }
+    flushToken();
+    return result;
+}
+
+bool isDddLikeFile(const std::string& relLow) {
+    return relLow.find("ddd") != std::string::npos
+        || relLow.find("domain") != std::string::npos
+        || relLow.find("architecture") != std::string::npos
+        || relLow.find("context-map") != std::string::npos
+        || relLow.find("bounded-context") != std::string::npos;
+}
+
+bool isSecondaryOntologyFile(const std::string& relLow) {
+    return relLow.find("ontology") != std::string::npos
+        || relLow.find("ontologia") != std::string::npos
+        || relLow.find("readme") != std::string::npos
+        || relLow.find("adr") != std::string::npos;
+}
+
+bool isSourceLikeFile(const std::string& relLow) {
+    const std::string ext = toLowerAscii(fs::path(relLow).extension().string());
+    return ext == ".cpp" || ext == ".cc" || ext == ".cxx" || ext == ".c"
+        || ext == ".hpp" || ext == ".hh" || ext == ".hxx" || ext == ".h"
+        || ext == ".ixx" || ext == ".ipp"
+        || ext == ".py" || ext == ".js" || ext == ".ts" || ext == ".tsx"
+        || ext == ".java" || ext == ".kt" || ext == ".cs" || ext == ".go"
+        || ext == ".rs";
+}
+
+bool isBuildOrConfigFile(const std::string& relLow) {
+    return relLow.find("cmakelists.txt") != std::string::npos
+        || relLow.find("meson.build") != std::string::npos
+        || relLow.find("makefile") != std::string::npos
+        || relLow.find("package.json") != std::string::npos
+        || relLow.find("cargo.toml") != std::string::npos
+        || relLow.find("go.mod") != std::string::npos
+        || relLow.find("pyproject.toml") != std::string::npos
+        || isCiFile(relLow);
+}
+
+std::string normalizeTokenForMatch(std::string value) {
+    value = toLowerAscii(std::move(value));
+    std::string out;
+    out.reserve(value.size());
+    for (char c : value) {
+        if (std::isalnum(static_cast<unsigned char>(c))) out.push_back(c);
+    }
+    return out;
+}
+
+bool tokensLooselyMatch(const std::string& lhs, const std::string& rhs) {
+    const std::string a = normalizeTokenForMatch(lhs);
+    const std::string b = normalizeTokenForMatch(rhs);
+    if (a.size() < 3 || b.size() < 3) return false;
+    return a == b || a.find(b) != std::string::npos || b.find(a) != std::string::npos;
+}
+
+bool isOntologyEntityCandidate(const std::string& value) {
+    const std::string token = normalizeTokenForMatch(value);
+    if (token.size() < 3) return false;
+
+    static const std::unordered_set<std::string> kEvidenceOrSupport = {
+        "ddd", "adr", "dai", "ci", "readme", "doc", "docs", "document", "documentation",
+        "policy", "policies", "schema", "schemas", "contract", "contracts", "evidence",
+        "audit", "log", "logs", "test", "tests", "build", "cmake", "makefile", "license",
+        "gitignore", "github", "gitlab", "workflow", "workflows", "pipeline", "job", "jobs",
+        "asan", "ubsan", "clang", "cppcheck", "valgrind", "format", "lint"
+    };
+    if (kEvidenceOrSupport.find(token) != kEvidenceOrSupport.end()) return false;
+
+    static const std::unordered_set<std::string> kProgrammingNoise = {
+        "std", "string", "vector", "array", "bool", "int", "float", "double", "size",
+        "size_t", "void", "const", "static", "include", "namespace", "return", "true",
+        "false", "null", "nullptr", "json", "imgui", "imvec2", "imu32", "filesystem",
+        "chrono", "optional", "function", "class", "struct", "public", "private"
+    };
+    if (kProgrammingNoise.find(token) != kProgrammingNoise.end()) return false;
+
+    static const std::unordered_set<std::string> kMethodologyTerms = {
+        "oci", "ocs", "ontology", "ontologia", "ontological", "clarity", "compatibility",
+        "score", "metric", "metrics", "maturity", "confidence", "validity", "identity",
+        "entity", "entities", "relation", "relations", "governance", "recommendation",
+        "recommendations"
+    };
+    if (kMethodologyTerms.find(token) != kMethodologyTerms.end()) return false;
+
+    return true;
+}
+
+void appendUniqueEntity(std::vector<std::string>& items, const std::string& value) {
+    if (!isOntologyEntityCandidate(value)) return;
+    appendUniqueLower(items, value);
+}
+
+void appendMergedUnique(std::vector<std::string>& target, const std::vector<std::string>& source) {
+    for (const auto& item : source) appendUniqueLower(target, item);
+}
+
+std::vector<std::string> extractOntologyEntitiesFromFiles(
+    const fs::path& root,
+    const std::vector<std::string>& files,
+    bool (*predicate)(const std::string&)
+) {
+    std::vector<std::string> entities;
+
+    for (const auto& rel : files) {
+        const std::string relLow = toLowerAscii(rel);
+        const std::string ext = toLowerAscii(fs::path(rel).extension().string());
+        if (ext != ".md" && ext != ".txt" && ext != ".yml" && ext != ".yaml" && ext != ".json") continue;
+        if (!predicate(relLow)) continue;
+
+        std::string content;
+        if (!readSmallTextFile(root / fs::path(rel), &content, 256 * 1024)) continue;
+        const auto tokens = extractCapitalizedTokens(content);
+        for (const auto& token : tokens) appendUniqueEntity(entities, token);
+    }
+    return entities;
+}
+
+std::vector<std::string> extractOntologyEntities(const fs::path& root, const std::vector<std::string>& files) {
+    auto primary = extractOntologyEntitiesFromFiles(root, files, isDddLikeFile);
+    if (!primary.empty()) return primary;
+    auto secondary = extractOntologyEntitiesFromFiles(root, files, isSecondaryOntologyFile);
+    return secondary;
+}
+
+std::vector<std::string> extractImplementedEntities(const fs::path& root, const std::vector<std::string>& files) {
+    std::vector<std::string> entities;
+    static const std::vector<std::string> kSourceDirs = {
+        "src", "include", "lib", "app", "domain", "core", "engine", "services", "modules"
+    };
+
+    for (const auto& rel : files) {
+        std::string relLow = toLowerAscii(rel);
+        std::replace(relLow.begin(), relLow.end(), '\\', '/');
+
+        const bool source = isSourceLikeFile(relLow);
+        const bool structuralHeader = relLow.find("include/") != std::string::npos || relLow.find("src/") != std::string::npos;
+        if (!source && !structuralHeader) continue;
+        if (pathContainsArtifactDir(relLow)) continue;
+
+        const fs::path relPath(rel);
+        const std::string stem = relPath.stem().string();
+        if (stem.size() >= 3 && stem != "main" && stem != "test") appendUniqueEntity(entities, stem);
+
+        for (const auto& dir : kSourceDirs) {
+            const std::string marker = dir + "/";
+            const std::size_t pos = relLow.find(marker);
+            if (pos == std::string::npos) continue;
+            const std::string after = rel.substr(pos + marker.size());
+            const std::size_t slash = after.find('/');
+            if (slash != std::string::npos && slash >= 3) appendUniqueEntity(entities, after.substr(0, slash));
+        }
+
+        std::string content;
+        if (!readSmallTextFile(root / relPath, &content, 256 * 1024)) continue;
+        const auto tokens = extractCapitalizedTokens(content);
+        for (const auto& token : tokens) appendUniqueEntity(entities, token);
+    }
+    return entities;
+}
+
+std::vector<std::string> extractOntologyRelationsFromFiles(
+    const fs::path& root,
+    const std::vector<std::string>& files,
+    bool (*predicate)(const std::string&)
+) {
+    std::vector<std::string> relations;
+    static const std::vector<std::string> kRelationVerbs = {
+        "uses", "emits", "depends_on", "depends", "owns", "contains",
+        "references", "generates", "syncs", "maps", "links", "exports", "imports"
+    };
+
+    for (const auto& rel : files) {
+        const std::string relLow = toLowerAscii(rel);
+        const std::string ext = toLowerAscii(fs::path(rel).extension().string());
+        if (ext != ".md" && ext != ".txt" && ext != ".yml" && ext != ".yaml" && ext != ".json") continue;
+        if (!predicate(relLow)) continue;
+
+        std::string content;
+        if (!readSmallTextFile(root / fs::path(rel), &content, 256 * 1024)) continue;
+        const std::string lowContent = toLowerAscii(content);
+        for (const auto& verb : kRelationVerbs) {
+            if (lowContent.find(verb) != std::string::npos) appendUniqueLower(relations, verb);
+        }
+    }
+    return relations;
+}
+
+std::vector<std::string> extractOntologyRelations(const fs::path& root, const std::vector<std::string>& files) {
+    auto primary = extractOntologyRelationsFromFiles(root, files, isDddLikeFile);
+    if (!primary.empty()) return primary;
+    auto secondary = extractOntologyRelationsFromFiles(root, files, isSecondaryOntologyFile);
+    return secondary;
+}
+
+std::vector<std::string> extractImplementedRelations(const fs::path& root, const std::vector<std::string>& files) {
+    std::vector<std::string> relations;
+    bool hasInclude = false;
+    bool hasImport = false;
+    bool hasNamespace = false;
+    bool hasBuildLink = false;
+    bool hasEventOrSignal = false;
+    bool hasPersistence = false;
+    bool hasApi = false;
+
+    for (const auto& rel : files) {
+        std::string relLow = toLowerAscii(rel);
+        std::replace(relLow.begin(), relLow.end(), '\\', '/');
+        if (pathContainsArtifactDir(relLow)) continue;
+
+        const bool relevant = isSourceLikeFile(relLow) || isBuildOrConfigFile(relLow);
+        if (!relevant) continue;
+
+        std::string content;
+        if (!readSmallTextFile(root / fs::path(rel), &content, 256 * 1024)) continue;
+        const std::string lowContent = toLowerAscii(content);
+
+        if (lowContent.find("#include") != std::string::npos) hasInclude = true;
+        if (lowContent.find("import ") != std::string::npos || lowContent.find("from ") != std::string::npos) hasImport = true;
+        if (lowContent.find("namespace ") != std::string::npos || lowContent.find("package ") != std::string::npos) hasNamespace = true;
+        if (lowContent.find("target_link_libraries") != std::string::npos || lowContent.find("dependencies") != std::string::npos) hasBuildLink = true;
+        if (lowContent.find("emit") != std::string::npos || lowContent.find("event") != std::string::npos || lowContent.find("signal") != std::string::npos) hasEventOrSignal = true;
+        if (lowContent.find("repository") != std::string::npos || lowContent.find("store") != std::string::npos || lowContent.find("database") != std::string::npos) hasPersistence = true;
+        if (lowContent.find("endpoint") != std::string::npos || lowContent.find("route") != std::string::npos || lowContent.find("api") != std::string::npos) hasApi = true;
+    }
+
+    if (hasInclude) appendUniqueLower(relations, "includes");
+    if (hasImport) appendUniqueLower(relations, "imports");
+    if (hasNamespace) appendUniqueLower(relations, "namespaces");
+    if (hasBuildLink) appendUniqueLower(relations, "links");
+    if (hasEventOrSignal) appendUniqueLower(relations, "emits");
+    if (hasPersistence) appendUniqueLower(relations, "persists");
+    if (hasApi) appendUniqueLower(relations, "exposes_api");
+    return relations;
+}
+
+int computeDocCodeAlignmentScore(
+    const std::vector<std::string>& declaredEntities,
+    const std::vector<std::string>& implementedEntities,
+    const std::vector<std::string>& declaredRelations,
+    const std::vector<std::string>& implementedRelations
+) {
+    auto coverage = [](const std::vector<std::string>& expected, const std::vector<std::string>& actual) {
+        if (expected.empty() && actual.empty()) return 50.0;
+        if (expected.empty()) return 35.0;
+        int matched = 0;
+        for (const auto& exp : expected) {
+            bool found = false;
+            for (const auto& got : actual) {
+                if (tokensLooselyMatch(exp, got)) {
+                    found = true;
+                    break;
+                }
+            }
+            if (found) matched++;
+        }
+        return (static_cast<double>(matched) * 100.0) / static_cast<double>(expected.size());
+    };
+
+    const double entityCoverage = coverage(declaredEntities, implementedEntities);
+    const double relationCoverage = coverage(declaredRelations, implementedRelations);
+    return std::clamp(static_cast<int>(std::lround(entityCoverage * 0.70 + relationCoverage * 0.30)), 0, 100);
+}
+
+bool repoHasAnyPatternInOntologyFiles(const fs::path& root, const std::vector<std::string>& files, const std::vector<std::string>& patterns) {
+    for (const auto& rel : files) {
+        const std::string relLow = toLowerAscii(rel);
+        const std::string ext = toLowerAscii(fs::path(rel).extension().string());
+        if (ext != ".md" && ext != ".txt" && ext != ".yml" && ext != ".yaml" && ext != ".json") continue;
+        if (!isDddLikeFile(relLow) && !isSecondaryOntologyFile(relLow)) {
+            continue;
+        }
+
+        std::string content;
+        if (!readSmallTextFile(root / fs::path(rel), &content, 256 * 1024)) continue;
+        const std::string lowContent = toLowerAscii(content);
+        for (const auto& pattern : patterns) {
+            if (lowContent.find(pattern) != std::string::npos) return true;
+        }
+    }
+    return false;
+}
+
+int coverageScoreFromCount(std::size_t count, std::size_t target) {
+    if (target == 0) return 0;
+    const double ratio = std::min<double>(1.0, static_cast<double>(count) / static_cast<double>(target));
+    return std::clamp(static_cast<int>(std::lround(ratio * 100.0)), 0, 100);
+}
+
+int computeCharacterizedEntitiesScore(
+    std::size_t declaredCount,
+    std::size_t implementedCount,
+    int alignmentScore
+) {
+    const int declaredScore = coverageScoreFromCount(declaredCount, 6);
+    const int implementedScore = coverageScoreFromCount(implementedCount, 12);
+    double weighted = static_cast<double>(declaredScore) * 0.35
+                    + static_cast<double>(implementedScore) * 0.35
+                    + static_cast<double>(alignmentScore) * 0.30;
+
+    if (declaredCount == 0 && implementedCount > 0) weighted = std::min(weighted, 55.0);
+    if (declaredCount > 0 && implementedCount == 0) weighted = std::min(weighted, 60.0);
+    if (alignmentScore < 40) weighted = std::min(weighted, 70.0);
+    return std::clamp(static_cast<int>(std::lround(weighted)), 0, 100);
+}
+
+int computeCharacterizedRelationsScore(
+    std::size_t declaredCount,
+    std::size_t implementedCount,
+    int alignmentScore
+) {
+    const int declaredScore = coverageScoreFromCount(declaredCount, 4);
+    const int implementedScore = coverageScoreFromCount(implementedCount, 5);
+    double weighted = static_cast<double>(declaredScore) * 0.35
+                    + static_cast<double>(implementedScore) * 0.35
+                    + static_cast<double>(alignmentScore) * 0.30;
+
+    if (declaredCount == 0 && implementedCount > 0) weighted = std::min(weighted, 55.0);
+    if (declaredCount > 0 && implementedCount == 0) weighted = std::min(weighted, 60.0);
+    if (alignmentScore < 40) weighted = std::min(weighted, 70.0);
+    return std::clamp(static_cast<int>(std::lround(weighted)), 0, 100);
+}
+
+int computeOntologyClarityScore(
+    int entitiesScore,
+    int relationsScore,
+    int validityScore,
+    int identityScore,
+    int alignmentScore
+) {
+    const double avg = (static_cast<double>(entitiesScore)
+        + static_cast<double>(relationsScore)
+        + static_cast<double>(validityScore)
+        + static_cast<double>(identityScore)) / 4.0;
+    const double weighted = avg * 0.75 + static_cast<double>(alignmentScore) * 0.25;
+    return std::clamp(static_cast<int>(std::lround(weighted)), 0, 100);
+}
+
+int computeOntologyConfidenceScore(
+    bool hasDdd,
+    bool hasAdr,
+    bool hasDai,
+    bool hasCi,
+    bool hasTests,
+    bool hasToolContracts,
+    bool hasAuditEvidence
+) {
+    int score = 0;
+    if (hasDdd) score += 45;
+    if (hasAdr) score += 15;
+    if (hasDai) score += 10;
+    if (hasCi) score += 10;
+    if (hasTests) score += 5;
+    if (hasToolContracts) score += 10;
+    if (hasAuditEvidence) score += 5;
+    return std::clamp(score, 0, 100);
+}
+
+double jaccardSimilarity(const std::vector<std::string>& lhs, const std::vector<std::string>& rhs) {
+    if (lhs.empty() && rhs.empty()) return 1.0;
+    std::set<std::string> a(lhs.begin(), lhs.end());
+    std::set<std::string> b(rhs.begin(), rhs.end());
+    std::size_t intersection = 0;
+    for (const auto& item : a) {
+        if (b.find(item) != b.end()) intersection++;
+    }
+    const std::size_t uni = a.size() + b.size() - intersection;
+    if (uni == 0) return 0.0;
+    return static_cast<double>(intersection) / static_cast<double>(uni);
+}
+
+std::string ontologyPairKey(const std::string& lhs, const std::string& rhs) {
+    if (lhs < rhs) return lhs + "\n" + rhs;
+    return rhs + "\n" + lhs;
+}
+
 std::string escapeCsvField(const std::string& value) {
     std::string out = "\"";
     out.reserve(value.size() + 2);
@@ -672,6 +1073,52 @@ AppUI::RepoInventoryEntry AppUI::buildRepoInventoryEntry(const std::string& repo
     item.governanceSignals = governanceSignalsCount(repoPath);
     item.hasGovernance = item.governanceSignals > 0;
     item.scoreMaturity = computeMaturityScore(item.hasAdr, item.hasDdd, item.hasDai, item.governanceSignals);
+    item.ontologyDeclaredEntities = extractOntologyEntities(repoPath, repoFiles);
+    item.ontologyImplementedEntities = extractImplementedEntities(repoPath, repoFiles);
+    item.ontologyDeclaredRelations = extractOntologyRelations(repoPath, repoFiles);
+    item.ontologyImplementedRelations = extractImplementedRelations(repoPath, repoFiles);
+    item.ontologyEntities = item.ontologyDeclaredEntities;
+    appendMergedUnique(item.ontologyEntities, item.ontologyImplementedEntities);
+    item.ontologyRelations = item.ontologyDeclaredRelations;
+    appendMergedUnique(item.ontologyRelations, item.ontologyImplementedRelations);
+    item.ontologyAlignmentScore = computeDocCodeAlignmentScore(
+        item.ontologyDeclaredEntities,
+        item.ontologyImplementedEntities,
+        item.ontologyDeclaredRelations,
+        item.ontologyImplementedRelations
+    );
+    item.ontologyEntitiesScore = computeCharacterizedEntitiesScore(
+        item.ontologyDeclaredEntities.size(),
+        item.ontologyImplementedEntities.size(),
+        item.ontologyAlignmentScore
+    );
+    item.ontologyRelationsScore = computeCharacterizedRelationsScore(
+        item.ontologyDeclaredRelations.size(),
+        item.ontologyImplementedRelations.size(),
+        item.ontologyAlignmentScore
+    );
+    item.ontologyValidityScore = repoHasAnyPatternInOntologyFiles(repoPath, repoFiles, {
+        "validity_rules", "validation", "invariant", "must ", "deve ", "rule", "rules"
+    }) ? 100 : 0;
+    item.ontologyIdentityScore = repoHasAnyPatternInOntologyFiles(repoPath, repoFiles, {
+        "identity_rules", "identified by", "id:", "identifier", "repo path", "source_path", "uuid"
+    }) ? 100 : 0;
+    item.ontologyClarityScore = computeOntologyClarityScore(
+        item.ontologyEntitiesScore,
+        item.ontologyRelationsScore,
+        item.ontologyValidityScore,
+        item.ontologyIdentityScore,
+        item.ontologyAlignmentScore
+    );
+    item.ontologyConfidenceScore = computeOntologyConfidenceScore(
+        item.hasDdd,
+        item.hasAdr,
+        item.hasDai,
+        item.hasCi,
+        item.hasTests,
+        item.hasToolContracts,
+        item.hasAuditEvidence
+    );
 
     const bool hasAddressSan = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"-fsanitize=address"});
     const bool hasUndefSan = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"-fsanitize=undefined"});
@@ -765,6 +1212,52 @@ AppUI::RepoInventoryEntry AppUI::buildRepoInventoryEntry(const std::string& repo
     }
 
     return item;
+}
+
+int AppUI::computeOntologyCompatibilityScore(const RepoInventoryEntry& lhs, const RepoInventoryEntry& rhs) const {
+    const double entitySim = jaccardSimilarity(lhs.ontologyEntities, rhs.ontologyEntities);
+    const double relationSim = jaccardSimilarity(lhs.ontologyRelations, rhs.ontologyRelations);
+    const double validitySim = (lhs.ontologyValidityScore > 0 && rhs.ontologyValidityScore > 0) ? 1.0
+        : (lhs.ontologyValidityScore == rhs.ontologyValidityScore ? 0.5 : 0.0);
+    const double identitySim = (lhs.ontologyIdentityScore > 0 && rhs.ontologyIdentityScore > 0) ? 1.0
+        : (lhs.ontologyIdentityScore == rhs.ontologyIdentityScore ? 0.5 : 0.0);
+
+    const double weighted = entitySim * 0.40 + relationSim * 0.30 + validitySim * 0.15 + identitySim * 0.15;
+    return std::clamp(static_cast<int>(std::lround(weighted * 100.0)), 0, 100);
+}
+
+int AppUI::cachedOntologyCompatibilityScore(const RepoInventoryEntry& lhs, const RepoInventoryEntry& rhs) const {
+    if (lhs.path == rhs.path) return 100;
+    const auto it = m_ontologyCompatibilityCache.find(ontologyPairKey(lhs.path, rhs.path));
+    if (it != m_ontologyCompatibilityCache.end()) return it->second;
+    return computeOntologyCompatibilityScore(lhs, rhs);
+}
+
+void AppUI::rebuildOntologyCompatibilityCache() {
+    m_ontologyCompatibilityCache.clear();
+    if (m_repoInventory.size() < 2) return;
+
+    const std::size_t pairCount = (m_repoInventory.size() * (m_repoInventory.size() - 1)) / 2;
+    m_ontologyCompatibilityCache.reserve(pairCount);
+    for (auto& item : m_repoInventory) {
+        item.ontologyBestCompatibilityScore = 0;
+        item.ontologyBestCompatibilityRepo.clear();
+    }
+
+    for (std::size_t i = 0; i < m_repoInventory.size(); i++) {
+        for (std::size_t j = i + 1; j < m_repoInventory.size(); j++) {
+            const int ocs = computeOntologyCompatibilityScore(m_repoInventory[i], m_repoInventory[j]);
+            m_ontologyCompatibilityCache[ontologyPairKey(m_repoInventory[i].path, m_repoInventory[j].path)] = ocs;
+            if (ocs > m_repoInventory[i].ontologyBestCompatibilityScore) {
+                m_repoInventory[i].ontologyBestCompatibilityScore = ocs;
+                m_repoInventory[i].ontologyBestCompatibilityRepo = m_repoInventory[j].name;
+            }
+            if (ocs > m_repoInventory[j].ontologyBestCompatibilityScore) {
+                m_repoInventory[j].ontologyBestCompatibilityScore = ocs;
+                m_repoInventory[j].ontologyBestCompatibilityRepo = m_repoInventory[i].name;
+            }
+        }
+    }
 }
 
 AppUI::AppUI(
@@ -1001,6 +1494,11 @@ void AppUI::render() {
         if (ImGui::BeginTabItem("  [Metricas]  ")) {
             ImGui::Spacing();
             renderFlowMetricsTab();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("  [Ontologia]  ")) {
+            ImGui::Spacing();
+            renderOntologyTab();
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("  [Inventario]  ")) {
@@ -1524,6 +2022,56 @@ void AppUI::renderFlowMetricsTab() {
     }
 
     ImGui::Spacing();
+    ImGui::SeparatorText("Saude Ontologica (OCI/OCS)");
+    if (m_repoInventory.empty()) {
+        ImGui::TextDisabled("Sem dados ontologicos no inventario.");
+    } else {
+        float sumOci = 0.f;
+        float sumOcs = 0.f;
+        float sumAlignment = 0.f;
+        int ocsPairs = 0;
+        int lowOci = 0;
+        int lowOcs = 0;
+        int missingRelations = 0;
+        int missingIdentity = 0;
+        int lowAlignment = 0;
+        for (std::size_t i = 0; i < m_repoInventory.size(); i++) {
+            const auto& repo = m_repoInventory[i];
+            sumOci += static_cast<float>(repo.ontologyClarityScore);
+            sumAlignment += static_cast<float>(repo.ontologyAlignmentScore);
+            if (repo.ontologyClarityScore < 50) lowOci++;
+            if (repo.ontologyAlignmentScore < 50) lowAlignment++;
+            if (repo.ontologyRelationsScore < 50) missingRelations++;
+            if (repo.ontologyIdentityScore == 0) missingIdentity++;
+            for (std::size_t j = i + 1; j < m_repoInventory.size(); j++) {
+                const int ocs = cachedOntologyCompatibilityScore(repo, m_repoInventory[j]);
+                sumOcs += static_cast<float>(ocs);
+                ocsPairs++;
+                if (ocs < 40) lowOcs++;
+            }
+        }
+        const float avgOci = sumOci / static_cast<float>(m_repoInventory.size());
+        const float avgAlignment = sumAlignment / static_cast<float>(m_repoInventory.size());
+        const float avgOcs = ocsPairs > 0 ? (sumOcs / static_cast<float>(ocsPairs)) : 0.f;
+        ImGui::Text("Media OCI: %.1f", avgOci);
+        ImGui::Text("Media Doc/Codigo: %.1f", avgAlignment);
+        ImGui::Text("Media OCS entre pares: %.1f", avgOcs);
+        ImGui::Text("Repos com OCI < 50: %d/%zu", lowOci, m_repoInventory.size());
+        ImGui::Text("Repos com Doc/Codigo < 50: %d/%zu", lowAlignment, m_repoInventory.size());
+        ImGui::Text("Pares com OCS < 40: %d/%d", lowOcs, ocsPairs);
+        ImGui::TextDisabled("OCI nao e apenas presenca de ADR/DDD/DAI: cruza documentos com estrutura e codigo.");
+        ImGui::TextDisabled("OCS compara repositorios e ajuda a decidir integrar, alinhar ou manter separado.");
+        if (lowOci > 0 || lowOcs > 0 || lowAlignment > 0 || missingRelations > 0 || missingIdentity > 0) {
+            ImGui::SeparatorText("Recomendacoes OCI/OCS");
+            if (lowOci > 0) ImGui::BulletText("Elevar OCI dos repos abaixo de 50 com ontologia minima versionada.");
+            if (lowAlignment > 0) ImGui::BulletText("Reconciliar documentos com codigo nos repos onde Doc/Codigo esta abaixo de 50.");
+            if (missingRelations > 0) ImGui::BulletText("Explicitar relacoes/eventos entre entidades nos repos com relacoes fracas.");
+            if (missingIdentity > 0) ImGui::BulletText("Definir identidade canonica para entidades centrais sem regra de identidade.");
+            if (lowOcs > 0) ImGui::BulletText("Tratar pares com OCS < 40 como candidatos a separacao ou alinhamento previo.");
+        }
+    }
+
+    ImGui::Spacing();
     ImGui::SeparatorText("Cobertura de Boas Praticas");
     if (!m_repoInventory.empty()) {
         const float total = static_cast<float>(m_repoInventory.size());
@@ -1555,10 +2103,12 @@ void AppUI::renderFlowMetricsTab() {
     } else {
         for (const auto* repo : top5) {
             if (!repo) continue;
-            ImGui::BulletText("%s | Total=%d | Artefatos=%d | CI=%s | Testes=%s",
+            ImGui::BulletText("%s | Total=%d | Artefatos=%d | OCI=%d | Top OCS=%d | CI=%s | Testes=%s",
                 repo->name.c_str(),
                 repo->scoreTotal,
                 repo->detectedArtifacts,
+                repo->ontologyClarityScore,
+                repo->ontologyBestCompatibilityScore,
                 repo->hasCi ? "OK" : "-",
                 repo->hasTests ? "OK" : "-");
         }
@@ -1590,6 +2140,512 @@ void AppUI::renderFlowMetricsTab() {
         }
         ImGui::PopTextWrapPos();
     }
+}
+
+void AppUI::renderOntologyGraph(const std::vector<const RepoInventoryEntry*>& rows) {
+    ImGui::BeginChild("##OntologyGraphRegion", ImVec2(0.f, 420.f), true);
+    ImGui::TextDisabled("Grafo de afinidade ontologica: eixo X = OCI, eixo Y = score total, arestas = OCS >= limiar.");
+    ImGui::SameLine();
+    ImGui::SliderInt("OCI Min", &m_ontologyMinOci, 0, 100);
+    ImGui::SameLine();
+    ImGui::SliderInt("OCS Min", &m_ontologyMinOcs, 0, 100);
+
+    const ImVec2 canvasPos = ImGui::GetCursorScreenPos();
+    const ImVec2 canvasSize = ImGui::GetContentRegionAvail();
+    if (canvasSize.x < 100.f || canvasSize.y < 100.f) {
+        ImGui::EndChild();
+        return;
+    }
+
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 canvasMax(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y);
+    draw->AddRectFilled(canvasPos, canvasMax, IM_COL32(10, 12, 18, 255));
+    draw->AddRect(canvasPos, canvasMax, IM_COL32(50, 60, 80, 200));
+
+    const float leftPad = 56.f;
+    const float rightPad = 20.f;
+    const float topPad = 20.f;
+    const float bottomPad = 34.f;
+    const float plotW = std::max(1.f, canvasSize.x - leftPad - rightPad);
+    const float plotH = std::max(1.f, canvasSize.y - topPad - bottomPad);
+    const ImVec2 plotMin(canvasPos.x + leftPad, canvasPos.y + topPad);
+    const ImVec2 plotMax(plotMin.x + plotW, plotMin.y + plotH);
+
+    draw->AddRect(plotMin, plotMax, IM_COL32(70, 90, 120, 200));
+    for (int tick = 0; tick <= 5; tick++) {
+        const float t = static_cast<float>(tick) / 5.f;
+        const float x = plotMin.x + plotW * t;
+        const float y = plotMax.y - plotH * t;
+        draw->AddLine(ImVec2(x, plotMin.y), ImVec2(x, plotMax.y), IM_COL32(30, 35, 48, 180));
+        draw->AddLine(ImVec2(plotMin.x, y), ImVec2(plotMax.x, y), IM_COL32(30, 35, 48, 180));
+        const std::string xlabel = std::to_string(static_cast<int>(std::lround(t * 100.f)));
+        const std::string ylabel = std::to_string(static_cast<int>(std::lround(t * 100.f)));
+        draw->AddText(ImVec2(x - 8.f, plotMax.y + 6.f), IM_COL32(150, 160, 180, 255), xlabel.c_str());
+        draw->AddText(ImVec2(plotMin.x - 28.f, y - 7.f), IM_COL32(150, 160, 180, 255), ylabel.c_str());
+    }
+    draw->AddText(ImVec2(plotMin.x + plotW * 0.5f - 40.f, plotMax.y + 18.f), IM_COL32(180, 190, 210, 255), "OCI");
+    draw->AddText(ImVec2(canvasPos.x + 6.f, plotMin.y - 4.f), IM_COL32(180, 190, 210, 255), "Score");
+
+    std::vector<const RepoInventoryEntry*> filtered;
+    filtered.reserve(rows.size());
+    for (const auto* row : rows) {
+        if (!row) continue;
+        if (row->ontologyClarityScore < m_ontologyMinOci) continue;
+        filtered.push_back(row);
+    }
+
+    struct NodePoint {
+        const RepoInventoryEntry* row{nullptr};
+        ImVec2 pos{};
+    };
+    std::vector<NodePoint> points;
+    points.reserve(filtered.size());
+    for (const auto* row : filtered) {
+        const float x = plotMin.x + plotW * (static_cast<float>(row->ontologyClarityScore) / 100.f);
+        const float y = plotMax.y - plotH * (static_cast<float>(row->scoreTotal) / 100.f);
+        points.push_back({row, ImVec2(x, y)});
+    }
+
+    for (std::size_t i = 0; i < points.size(); i++) {
+        for (std::size_t j = i + 1; j < points.size(); j++) {
+            const int ocs = cachedOntologyCompatibilityScore(*points[i].row, *points[j].row);
+            if (ocs < m_ontologyMinOcs) continue;
+            const int alpha = 50 + (ocs * 155 / 100);
+            draw->AddLine(points[i].pos, points[j].pos, IM_COL32(90, 160, 255, alpha), 1.0f + static_cast<float>(ocs) / 40.f);
+        }
+    }
+
+    const ImVec2 mousePos = ImGui::GetIO().MousePos;
+    const bool mouseInside = mousePos.x >= plotMin.x && mousePos.x <= plotMax.x && mousePos.y >= plotMin.y && mousePos.y <= plotMax.y;
+    const RepoInventoryEntry* hovered = nullptr;
+    for (const auto& point : points) {
+        const float radius = 5.f + (static_cast<float>(point.row->ontologyClarityScore) / 100.f) * 8.f;
+        const bool selected = (!m_ontologySelectedPath.empty() && point.row->path == m_ontologySelectedPath);
+        const ImU32 fill = selected ? IM_COL32(255, 215, 90, 240)
+            : IM_COL32(70, 150 + point.row->ontologyClarityScore, 220, 230);
+        const ImU32 border = selected ? IM_COL32(255, 255, 180, 255)
+            : IM_COL32(30, 50, 80, 255);
+        draw->AddCircleFilled(point.pos, radius, fill, 24);
+        draw->AddCircle(point.pos, radius, border, 24, selected ? 2.5f : 1.5f);
+        draw->AddText(ImVec2(point.pos.x + radius + 4.f, point.pos.y - 6.f), IM_COL32(220, 225, 235, 220), point.row->name.c_str());
+
+        if (mouseInside) {
+            const float dx = mousePos.x - point.pos.x;
+            const float dy = mousePos.y - point.pos.y;
+            if (dx * dx + dy * dy <= radius * radius) hovered = point.row;
+        }
+    }
+
+    ImGui::SetCursorScreenPos(canvasPos);
+    ImGui::InvisibleButton("##ontology_graph_canvas", canvasSize, ImGuiButtonFlags_MouseButtonLeft);
+    if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left) && hovered) {
+        m_ontologySelectedPath = hovered->path;
+    }
+
+    if (hovered) {
+        ImGui::BeginTooltip();
+        ImGui::TextColored(ImVec4(0.70f, 0.90f, 1.f, 1.f), "%s", hovered->name.c_str());
+        ImGui::Text("OCI: %d | Score Total: %d", hovered->ontologyClarityScore, hovered->scoreTotal);
+        ImGui::Text("Entidades: %zu | Relacoes: %zu", hovered->ontologyEntities.size(), hovered->ontologyRelations.size());
+        ImGui::Text("Validade: %d | Identidade: %d | Doc/Codigo: %d",
+            hovered->ontologyValidityScore,
+            hovered->ontologyIdentityScore,
+            hovered->ontologyAlignmentScore);
+        ImGui::EndTooltip();
+    }
+
+    ImGui::EndChild();
+}
+
+void AppUI::renderOntologyTab() {
+    if (m_repoInventory.empty()) {
+        scanWorkspaceInventory();
+    }
+
+    std::vector<const RepoInventoryEntry*> rows;
+    rows.reserve(m_repoInventory.size());
+    for (const auto& item : m_repoInventory) rows.push_back(&item);
+    std::stable_sort(rows.begin(), rows.end(), [](const RepoInventoryEntry* a, const RepoInventoryEntry* b) {
+        if (a->ontologyClarityScore != b->ontologyClarityScore) return a->ontologyClarityScore > b->ontologyClarityScore;
+        return a->name < b->name;
+    });
+
+    float avgOci = 0.f;
+    int withValidity = 0;
+    int withIdentity = 0;
+    int withEntities = 0;
+    int withRelations = 0;
+    for (const auto* row : rows) {
+        avgOci += static_cast<float>(row->ontologyClarityScore);
+        if (row->ontologyValidityScore > 0) withValidity++;
+        if (row->ontologyIdentityScore > 0) withIdentity++;
+        if (!row->ontologyEntities.empty()) withEntities++;
+        if (!row->ontologyRelations.empty()) withRelations++;
+    }
+    if (!rows.empty()) avgOci /= static_cast<float>(rows.size());
+
+    if (ImGui::Button("Exportar Ontologia CSV")) {
+        std::string outPath;
+        std::string err;
+        if (exportOntologyCsv(&outPath, &err)) m_ontologyExportMessage = "Ontologia CSV salvo em: " + outPath;
+        else m_ontologyExportMessage = "Falha ao exportar ontologia CSV: " + err;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Exportar Ontologia JSON")) {
+        std::string outPath;
+        std::string err;
+        if (exportOntologyJson(&outPath, &err)) m_ontologyExportMessage = "Ontologia JSON salvo em: " + outPath;
+        else m_ontologyExportMessage = "Falha ao exportar ontologia JSON: " + err;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Exportar Relatorio Ontologico")) {
+        std::string outPath;
+        std::string err;
+        if (exportOntologyReport(&outPath, &err)) m_ontologyExportMessage = "Relatorio ontologico salvo em: " + outPath;
+        else m_ontologyExportMessage = "Falha ao exportar relatorio ontologico: " + err;
+    }
+    if (!m_ontologyExportMessage.empty()) {
+        ImGui::TextWrapped("%s", m_ontologyExportMessage.c_str());
+    }
+
+    ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.f, 1.f), "Indicadores Ontologicos");
+    ImGui::Separator();
+    ImGui::Text("Repos no inventario: %zu", rows.size());
+    ImGui::Text("Media OCI: %.1f", avgOci);
+    ImGui::Text("Cobertura entidades: %d/%zu", withEntities, rows.size());
+    ImGui::Text("Cobertura relacoes: %d/%zu", withRelations, rows.size());
+    ImGui::Text("Cobertura validade: %d/%zu", withValidity, rows.size());
+    ImGui::Text("Cobertura identidade: %d/%zu", withIdentity, rows.size());
+    ImGui::Spacing();
+    ImGui::TextDisabled("OCI = entidades, relacoes, validade e identidade, ajustado por coerencia documento/codigo.");
+    ImGui::TextDisabled("OCS = compatibilidade entre pares de repositorios.");
+
+    renderOntologyGraph(rows);
+
+    ImGui::SeparatorText("Tabela Ontologica");
+    if (ImGui::BeginTable("##ontology_table", 12,
+        ImGuiTableFlags_BordersInnerV | ImGuiTableFlags_RowBg |
+        ImGuiTableFlags_ScrollY | ImGuiTableFlags_SizingStretchProp,
+        ImVec2(0.f, 280.f))) {
+        ImGui::TableSetupScrollFreeze(0, 1);
+        ImGui::TableSetupColumn("Repo", ImGuiTableColumnFlags_WidthStretch, 2.0f);
+        ImGui::TableSetupColumn("OCI", ImGuiTableColumnFlags_WidthFixed, 60.f);
+        ImGui::TableSetupColumn("Entidades", ImGuiTableColumnFlags_WidthFixed, 80.f);
+        ImGui::TableSetupColumn("Relacoes", ImGuiTableColumnFlags_WidthFixed, 80.f);
+        ImGui::TableSetupColumn("Validade", ImGuiTableColumnFlags_WidthFixed, 80.f);
+        ImGui::TableSetupColumn("Identidade", ImGuiTableColumnFlags_WidthFixed, 82.f);
+        ImGui::TableSetupColumn("Conf", ImGuiTableColumnFlags_WidthFixed, 55.f);
+        ImGui::TableSetupColumn("Doc/Cod", ImGuiTableColumnFlags_WidthFixed, 70.f);
+        ImGui::TableSetupColumn("Top OCS", ImGuiTableColumnFlags_WidthFixed, 70.f);
+        ImGui::TableSetupColumn("Par", ImGuiTableColumnFlags_WidthStretch, 1.2f);
+        ImGui::TableSetupColumn("N Ent", ImGuiTableColumnFlags_WidthFixed, 55.f);
+        ImGui::TableSetupColumn("N Rel", ImGuiTableColumnFlags_WidthFixed, 55.f);
+        ImGui::TableHeadersRow();
+        ImGuiListClipper clipper;
+        clipper.Begin(static_cast<int>(rows.size()));
+        while (clipper.Step()) for (int rowIndex = clipper.DisplayStart; rowIndex < clipper.DisplayEnd; rowIndex++) {
+            const auto* row = rows[static_cast<std::size_t>(rowIndex)];
+            if (!row) continue;
+            ImGui::TableNextRow();
+            ImGui::TableSetColumnIndex(0);
+            const bool selected = (!m_ontologySelectedPath.empty() && row->path == m_ontologySelectedPath);
+            if (ImGui::Selectable((row->name + "##ontology").c_str(), selected, ImGuiSelectableFlags_SpanAllColumns)) {
+                m_ontologySelectedPath = row->path;
+            }
+            ImGui::TableSetColumnIndex(1); ImGui::Text("%d", row->ontologyClarityScore);
+            ImGui::TableSetColumnIndex(2); ImGui::Text("%d", row->ontologyEntitiesScore);
+            ImGui::TableSetColumnIndex(3); ImGui::Text("%d", row->ontologyRelationsScore);
+            ImGui::TableSetColumnIndex(4); ImGui::Text("%d", row->ontologyValidityScore);
+            ImGui::TableSetColumnIndex(5); ImGui::Text("%d", row->ontologyIdentityScore);
+            ImGui::TableSetColumnIndex(6); ImGui::Text("%d", row->ontologyConfidenceScore);
+            ImGui::TableSetColumnIndex(7); ImGui::Text("%d", row->ontologyAlignmentScore);
+            ImGui::TableSetColumnIndex(8); ImGui::Text("%d", row->ontologyBestCompatibilityScore);
+            ImGui::TableSetColumnIndex(9); ImGui::TextUnformatted(row->ontologyBestCompatibilityRepo.empty() ? "-" : row->ontologyBestCompatibilityRepo.c_str());
+            ImGui::TableSetColumnIndex(10); ImGui::Text("%zu", row->ontologyEntities.size());
+            ImGui::TableSetColumnIndex(11); ImGui::Text("%zu", row->ontologyRelations.size());
+        }
+        ImGui::EndTable();
+    }
+
+    if (!m_ontologySelectedPath.empty()) {
+        const RepoInventoryEntry* selected = nullptr;
+        for (const auto& item : m_repoInventory) {
+            if (item.path == m_ontologySelectedPath) {
+                selected = &item;
+                break;
+            }
+        }
+        if (selected) {
+            ImGui::SeparatorText("Detalhe e Compatibilidade");
+            ImGui::TextColored(ImVec4(0.70f, 0.90f, 1.f, 1.f), "%s", selected->name.c_str());
+            ImGui::TextDisabled("%s", selected->path.c_str());
+            ImGui::Text("OCI: %d", selected->ontologyClarityScore);
+            ImGui::Text("Confianca Ontologica: %d", selected->ontologyConfidenceScore);
+            ImGui::Text("Coerencia Doc/Codigo: %d", selected->ontologyAlignmentScore);
+            ImGui::BulletText("Entidades: %d", selected->ontologyEntitiesScore);
+            ImGui::BulletText("Relacoes: %d", selected->ontologyRelationsScore);
+            ImGui::BulletText("Validade: %d", selected->ontologyValidityScore);
+            ImGui::BulletText("Identidade: %d", selected->ontologyIdentityScore);
+            ImGui::BulletText("Entidades declaradas/implementadas: %zu/%zu",
+                selected->ontologyDeclaredEntities.size(),
+                selected->ontologyImplementedEntities.size());
+            ImGui::BulletText("Relacoes declaradas/implementadas: %zu/%zu",
+                selected->ontologyDeclaredRelations.size(),
+                selected->ontologyImplementedRelations.size());
+            if (!selected->ontologyEntities.empty()) {
+                std::string entities = "Entidades: ";
+                for (std::size_t i = 0; i < selected->ontologyEntities.size() && i < 12; i++) {
+                    if (i > 0) entities += ", ";
+                    entities += selected->ontologyEntities[i];
+                }
+                ImGui::TextWrapped("%s", entities.c_str());
+            }
+            if (!selected->ontologyRelations.empty()) {
+                std::string relations = "Relacoes: ";
+                for (std::size_t i = 0; i < selected->ontologyRelations.size() && i < 12; i++) {
+                    if (i > 0) relations += ", ";
+                    relations += selected->ontologyRelations[i];
+                }
+                ImGui::TextWrapped("%s", relations.c_str());
+            }
+
+            std::vector<std::pair<int, const RepoInventoryEntry*>> compat;
+            compat.reserve(m_repoInventory.size());
+            for (const auto& candidate : m_repoInventory) {
+                if (candidate.path == selected->path) continue;
+                compat.push_back({cachedOntologyCompatibilityScore(*selected, candidate), &candidate});
+            }
+                std::stable_sort(compat.begin(), compat.end(), [](const auto& a, const auto& b) {
+                if (a.first != b.first) return a.first > b.first;
+                return a.second->name < b.second->name;
+            });
+
+            ImGui::SeparatorText("Top OCS");
+            const std::size_t maxRows = std::min<std::size_t>(8, compat.size());
+            for (std::size_t i = 0; i < maxRows; i++) {
+                const char* action =
+                    compat[i].first >= 70 ? "integrar" :
+                    compat[i].first >= 40 ? "alinhar" : "separar";
+                ImGui::BulletText("%s | OCS=%d | %s",
+                    compat[i].second->name.c_str(),
+                    compat[i].first,
+                    action);
+            }
+        }
+    }
+}
+
+bool AppUI::exportOntologyCsv(std::string* outputPath, std::string* errorMsg) const {
+    const fs::path outDir = fs::path(m_dataPath).parent_path().empty() ? fs::path("data") : fs::path(m_dataPath).parent_path();
+    std::error_code ec;
+    fs::create_directories(outDir, ec);
+    if (ec) {
+        if (errorMsg) *errorMsg = "nao foi possivel criar diretorio de saida";
+        return false;
+    }
+
+    const std::string today = todayISO();
+    const fs::path outFile = outDir / ("ontology-" + today + ".csv");
+    std::ofstream out(outFile);
+    if (!out.is_open()) {
+        if (errorMsg) *errorMsg = "nao foi possivel abrir arquivo para escrita";
+        return false;
+    }
+
+    out << "repo,path,ontology_clarity_score,ontology_entities_score,ontology_relations_score,ontology_validity_score,ontology_identity_score,ontology_confidence_score,ontology_alignment_score,declared_entities_count,implemented_entities_count,declared_relations_count,implemented_relations_count,entities_count,relations_count,entities,relations,declared_entities,implemented_entities,declared_relations,implemented_relations\n";
+    for (const auto& item : m_repoInventory) {
+        auto joinList = [](const std::vector<std::string>& values) {
+            std::string joined;
+            for (std::size_t i = 0; i < values.size(); i++) {
+                if (i > 0) joined += ";";
+                joined += values[i];
+            }
+            return joined;
+        };
+        const std::string entities = joinList(item.ontologyEntities);
+        const std::string relations = joinList(item.ontologyRelations);
+        const std::string declaredEntities = joinList(item.ontologyDeclaredEntities);
+        const std::string implementedEntities = joinList(item.ontologyImplementedEntities);
+        const std::string declaredRelations = joinList(item.ontologyDeclaredRelations);
+        const std::string implementedRelations = joinList(item.ontologyImplementedRelations);
+        out << escapeCsvField(item.name) << ","
+            << escapeCsvField(item.path) << ","
+            << item.ontologyClarityScore << ","
+            << item.ontologyEntitiesScore << ","
+            << item.ontologyRelationsScore << ","
+            << item.ontologyValidityScore << ","
+            << item.ontologyIdentityScore << ","
+            << item.ontologyConfidenceScore << ","
+            << item.ontologyAlignmentScore << ","
+            << item.ontologyDeclaredEntities.size() << ","
+            << item.ontologyImplementedEntities.size() << ","
+            << item.ontologyDeclaredRelations.size() << ","
+            << item.ontologyImplementedRelations.size() << ","
+            << item.ontologyEntities.size() << ","
+            << item.ontologyRelations.size() << ","
+            << escapeCsvField(entities) << ","
+            << escapeCsvField(relations) << ","
+            << escapeCsvField(declaredEntities) << ","
+            << escapeCsvField(implementedEntities) << ","
+            << escapeCsvField(declaredRelations) << ","
+            << escapeCsvField(implementedRelations) << "\n";
+    }
+
+    if (!out.good()) {
+        if (errorMsg) *errorMsg = "erro durante escrita do CSV";
+        return false;
+    }
+    if (outputPath) *outputPath = outFile.string();
+    if (errorMsg) errorMsg->clear();
+    return true;
+}
+
+bool AppUI::exportOntologyJson(std::string* outputPath, std::string* errorMsg) const {
+    const fs::path outDir = fs::path(m_dataPath).parent_path().empty() ? fs::path("data") : fs::path(m_dataPath).parent_path();
+    std::error_code ec;
+    fs::create_directories(outDir, ec);
+    if (ec) {
+        if (errorMsg) *errorMsg = "nao foi possivel criar diretorio de saida";
+        return false;
+    }
+
+    const std::string today = todayISO();
+    const fs::path outFile = outDir / ("ontology-" + today + ".json");
+    json root;
+    root["generated_at"] = today;
+    root["workspace"] = m_repoInventoryRoot;
+    root["reference_doc"] = "docs/ontology/OCI_OCS_FOUNDATION.tex";
+    root["repos"] = json::array();
+
+    for (const auto& item : m_repoInventory) {
+        json compat = json::array();
+        for (const auto& other : m_repoInventory) {
+            if (other.path == item.path) continue;
+            compat.push_back({
+                {"repo", other.name},
+                {"path", other.path},
+                {"ocs", cachedOntologyCompatibilityScore(item, other)}
+            });
+        }
+        root["repos"].push_back({
+            {"repo", item.name},
+            {"path", item.path},
+            {"ontology_clarity_score", item.ontologyClarityScore},
+            {"ontology_entities_score", item.ontologyEntitiesScore},
+            {"ontology_relations_score", item.ontologyRelationsScore},
+            {"ontology_validity_score", item.ontologyValidityScore},
+            {"ontology_identity_score", item.ontologyIdentityScore},
+            {"ontology_confidence_score", item.ontologyConfidenceScore},
+            {"ontology_alignment_score", item.ontologyAlignmentScore},
+            {"ontology_entities", item.ontologyEntities},
+            {"ontology_relations", item.ontologyRelations},
+            {"ontology_declared_entities", item.ontologyDeclaredEntities},
+            {"ontology_implemented_entities", item.ontologyImplementedEntities},
+            {"ontology_declared_relations", item.ontologyDeclaredRelations},
+            {"ontology_implemented_relations", item.ontologyImplementedRelations},
+            {"compatibility", compat}
+        });
+    }
+
+    std::ofstream out(outFile);
+    if (!out.is_open()) {
+        if (errorMsg) *errorMsg = "nao foi possivel abrir arquivo para escrita";
+        return false;
+    }
+    out << std::setw(2) << root << "\n";
+    if (!out.good()) {
+        if (errorMsg) *errorMsg = "erro durante escrita do JSON";
+        return false;
+    }
+    if (outputPath) *outputPath = outFile.string();
+    if (errorMsg) errorMsg->clear();
+    return true;
+}
+
+bool AppUI::exportOntologyReport(std::string* outputPath, std::string* errorMsg) const {
+    const fs::path outDir = fs::path(m_dataPath).parent_path().empty() ? fs::path("data") : fs::path(m_dataPath).parent_path();
+    std::error_code ec;
+    fs::create_directories(outDir, ec);
+    if (ec) {
+        if (errorMsg) *errorMsg = "nao foi possivel criar diretorio de saida";
+        return false;
+    }
+
+    const std::string today = todayISO();
+    const fs::path outFile = outDir / ("ontology-report-" + today + ".md");
+    std::ofstream out(outFile);
+    if (!out.is_open()) {
+        if (errorMsg) *errorMsg = "nao foi possivel abrir relatorio para escrita";
+        return false;
+    }
+
+    float avgOci = 0.f;
+    for (const auto& item : m_repoInventory) avgOci += static_cast<float>(item.ontologyClarityScore);
+    if (!m_repoInventory.empty()) avgOci /= static_cast<float>(m_repoInventory.size());
+
+    out << "# Relatorio Ontologico - LabGestao\n\n";
+    out << "- Data: " << today << "\n";
+    out << "- Workspace: " << m_repoInventoryRoot << "\n";
+    out << "- Referencia conceitual: `docs/ontology/OCI_OCS_FOUNDATION.tex`\n";
+    out << "- Repositorios analisados: " << m_repoInventory.size() << "\n";
+    out << "- Media OCI: " << std::fixed << std::setprecision(1) << avgOci << "\n\n";
+
+    out << "## Parametros OCI\n\n";
+    out << "- Entidades: cobertura de entidades ontologicamente relevantes, filtrando artefatos instrumentais e cruzando documentos com codigo.\n";
+    out << "- Relacoes: cobertura de relacoes formais declaradas e relacoes implementadas por includes/imports/build/eventos/APIs.\n";
+    out << "- Validade: presenca de regras, invariantes ou criterios de validacao.\n";
+    out << "- Identidade: presenca de regras de identificacao canonica dos elementos.\n\n";
+    out << "- Confianca: peso da evidencia estrutural e operacional, com DDD como fonte primaria, ADR/DAI como rastreabilidade e CI como validacao.\n\n";
+
+    out << "## OCI por Projeto\n\n";
+    out << "| Projeto | OCI | Entidades | Relacoes | Validade | Identidade | Doc/Codigo | Confianca |\n";
+    out << "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n";
+    for (const auto& item : m_repoInventory) {
+        out << "| " << item.name
+            << " | " << item.ontologyClarityScore
+            << " | " << item.ontologyEntitiesScore
+            << " | " << item.ontologyRelationsScore
+            << " | " << item.ontologyValidityScore
+            << " | " << item.ontologyIdentityScore
+            << " | " << item.ontologyAlignmentScore
+            << " | " << item.ontologyConfidenceScore
+            << " |\n";
+    }
+    out << "\n";
+
+    out << "## OCS por Projeto\n\n";
+    for (const auto& item : m_repoInventory) {
+        std::vector<std::pair<int, const RepoInventoryEntry*>> compat;
+        for (const auto& other : m_repoInventory) {
+            if (other.path == item.path) continue;
+            compat.push_back({cachedOntologyCompatibilityScore(item, other), &other});
+        }
+        std::stable_sort(compat.begin(), compat.end(), [](const auto& a, const auto& b) {
+            if (a.first != b.first) return a.first > b.first;
+            return a.second->name < b.second->name;
+        });
+        out << "### " << item.name << "\n\n";
+        const std::size_t limit = std::min<std::size_t>(5, compat.size());
+        if (limit == 0) {
+            out << "- Sem pares para comparacao.\n\n";
+            continue;
+        }
+        for (std::size_t i = 0; i < limit; i++) {
+            const char* action =
+                compat[i].first >= 70 ? "integrar" :
+                compat[i].first >= 40 ? "alinhar" : "manter separado";
+            out << "- " << compat[i].second->name << " | OCS=" << compat[i].first << " | " << action << "\n";
+        }
+        out << "\n";
+    }
+
+    if (!out.good()) {
+        if (errorMsg) *errorMsg = "erro ao escrever relatorio";
+        return false;
+    }
+    if (outputPath) *outputPath = outFile.string();
+    if (errorMsg) errorMsg->clear();
+    return true;
 }
 
 std::vector<const AppUI::RepoInventoryEntry*> AppUI::topCriticalRepos(std::size_t limit) const {
@@ -1700,23 +2756,38 @@ bool AppUI::exportExecutiveReport(std::string* outputPath, std::string* errorMsg
     }
 
     float avgTotal = 0.f, avgOper = 0.f, avgMatur = 0.f, avgConfiabCfg = 0.f, avgConfiabExec = 0.f;
+    float avgOci = 0.f, avgOcs = 0.f, avgAlignment = 0.f;
     float coverageCi = 0.f, coverageTests = 0.f, coverageAsan = 0.f, coverageStatic = 0.f, coverageFormat = 0.f;
+    int lowOci = 0, lowOcs = 0, ocsPairs = 0;
     if (!m_repoInventory.empty()) {
         int cCi = 0, cTests = 0, cAsan = 0, cStatic = 0, cFormat = 0;
-        for (const auto& repo : m_repoInventory) {
+        for (std::size_t i = 0; i < m_repoInventory.size(); i++) {
+            const auto& repo = m_repoInventory[i];
             avgTotal += static_cast<float>(repo.scoreTotal);
             avgOper += static_cast<float>(repo.scoreOperational);
             avgMatur += static_cast<float>(repo.scoreMaturity);
             avgConfiabCfg += static_cast<float>(repo.scoreReliability);
             avgConfiabExec += static_cast<float>(repo.scoreReliabilityExec);
+            avgOci += static_cast<float>(repo.ontologyClarityScore);
+            avgAlignment += static_cast<float>(repo.ontologyAlignmentScore);
+            if (repo.ontologyClarityScore < 50) lowOci++;
             if (repo.hasCi) cCi++;
             if (repo.hasTests) cTests++;
             if (repo.hasAsanUbsan) cAsan++;
             if (repo.hasStaticAnalysis) cStatic++;
             if (repo.hasFormatLint) cFormat++;
+            for (std::size_t j = i + 1; j < m_repoInventory.size(); j++) {
+                const int ocs = cachedOntologyCompatibilityScore(repo, m_repoInventory[j]);
+                avgOcs += static_cast<float>(ocs);
+                ocsPairs++;
+                if (ocs < 40) lowOcs++;
+            }
         }
         const float n = static_cast<float>(m_repoInventory.size());
         avgTotal /= n; avgOper /= n; avgMatur /= n; avgConfiabCfg /= n; avgConfiabExec /= n;
+        avgOci /= n;
+        avgAlignment /= n;
+        if (ocsPairs > 0) avgOcs /= static_cast<float>(ocsPairs);
         coverageCi = (static_cast<float>(cCi) * 100.f) / n;
         coverageTests = (static_cast<float>(cTests) * 100.f) / n;
         coverageAsan = (static_cast<float>(cAsan) * 100.f) / n;
@@ -1739,6 +2810,9 @@ bool AppUI::exportExecutiveReport(std::string* outputPath, std::string* errorMsg
     out << "- Media Maturidade: " << std::fixed << std::setprecision(1) << avgMatur << "\n";
     out << "- Media Confiab (Config): " << std::fixed << std::setprecision(1) << avgConfiabCfg << "\n";
     out << "- Media Confiab (Exec): " << std::fixed << std::setprecision(1) << avgConfiabExec << "\n\n";
+    out << "- Media OCI: " << std::fixed << std::setprecision(1) << avgOci << "\n";
+    out << "- Media Doc/Codigo: " << std::fixed << std::setprecision(1) << avgAlignment << "\n";
+    out << "- Media OCS entre pares: " << std::fixed << std::setprecision(1) << avgOcs << "\n\n";
 
     out << "## Indicadores Globais de Fluxo\n\n";
     out << "- Projetos totais: " << globalMetrics.total_projects << "\n";
@@ -1762,6 +2836,15 @@ bool AppUI::exportExecutiveReport(std::string* outputPath, std::string* errorMsg
     out << "- Static Analysis: " << std::fixed << std::setprecision(1) << coverageStatic << "%\n";
     out << "- Format/Lint: " << std::fixed << std::setprecision(1) << coverageFormat << "%\n\n";
 
+    out << "## Saude Ontologica (OCI/OCS)\n\n";
+    out << "- Media OCI: " << std::fixed << std::setprecision(1) << avgOci << "\n";
+    out << "- Media Doc/Codigo: " << std::fixed << std::setprecision(1) << avgAlignment << "\n";
+    out << "- Media OCS entre pares: " << std::fixed << std::setprecision(1) << avgOcs << "\n";
+    out << "- Repos com OCI < 50: " << lowOci << "/" << m_repoInventory.size() << "\n";
+    out << "- Pares com OCS < 40: " << lowOcs << "/" << ocsPairs << "\n";
+    out << "- OCI considera entidades, relacoes, validade e identidade, ajustado pela coerencia entre documentos e codigo.\n";
+    out << "- OCS compara repositorios e orienta integrar, alinhar ou manter separado.\n\n";
+
     out << "## Tendencia\n\n";
     if (hasTrendSnapshot && !m_repoInventory.empty()) {
         out << "- Ultimo snapshot: " << snapshotDate << "\n";
@@ -1772,6 +2855,12 @@ bool AppUI::exportExecutiveReport(std::string* outputPath, std::string* errorMsg
         out << "- Snapshot anterior indisponivel: "
             << (snapshotErr.empty() ? "nenhum snapshot exportado" : snapshotErr) << "\n\n";
     }
+
+    out << "## Ontologia\n\n";
+    out << "- Media OCI: " << std::fixed << std::setprecision(1) << avgOci << "\n";
+    out << "- Media Doc/Codigo: " << std::fixed << std::setprecision(1) << avgAlignment << "\n";
+    out << "- Media OCS entre pares: " << std::fixed << std::setprecision(1) << avgOcs << "\n";
+    out << "- OCI = cobertura de entidades, relacoes, regras de validacao e regras de identidade, ajustada pela coerencia documento/codigo.\n\n";
 
     out << "## Metricas por Projeto\n\n";
     out << "| Projeto | Status | Lead Time | Cycle Time | Aging | Transicoes | DAI Abertos | Impedimentos |\n";
@@ -1786,6 +2875,21 @@ bool AppUI::exportExecutiveReport(std::string* outputPath, std::string* errorMsg
             << " | " << m.status_transitions
             << " | " << m.open_dai_items
             << " | " << m.open_impediments
+            << " |\n";
+    }
+    out << "\n";
+
+    out << "## OCI por Repositorio\n\n";
+    out << "| Repo | OCI | Entidades | Relacoes | Validade | Identidade | Doc/Codigo |\n";
+    out << "| --- | ---: | ---: | ---: | ---: | ---: | ---: |\n";
+    for (const auto& repo : m_repoInventory) {
+        out << "| " << repo.name
+            << " | " << repo.ontologyClarityScore
+            << " | " << repo.ontologyEntitiesScore
+            << " | " << repo.ontologyRelationsScore
+            << " | " << repo.ontologyValidityScore
+            << " | " << repo.ontologyIdentityScore
+            << " | " << repo.ontologyAlignmentScore
             << " |\n";
     }
     out << "\n";
@@ -1911,6 +3015,7 @@ void AppUI::processPendingInventoryScan() {
             if (a.scoreOperational != b.scoreOperational) return a.scoreOperational > b.scoreOperational;
             return a.name < b.name;
         });
+        rebuildOntologyCompatibilityCache();
 
         if (!m_repoSelectedPath.empty()) {
             bool found = false;
@@ -2176,7 +3281,7 @@ void AppUI::renderInventoryTab() {
             ImGui::SameLine();
             ImGui::TextUnformatted(item->name.c_str());
             ImGui::TableSetColumnIndex(1); ImGui::Text("%d", item->scoreTotal);
-            ImGui::TableSetColumnIndex(2); ImGui::Text("%d", item->scoreEngineeringDiscipline);
+        ImGui::TableSetColumnIndex(2); ImGui::Text("%d", item->scoreEngineeringDiscipline);
             ImGui::TableSetColumnIndex(3); ImGui::Text("%d", item->scoreVibeRisk);
             ImGui::TableSetColumnIndex(4); ImGui::Text("%d", item->scoreOperational);
             ImGui::TableSetColumnIndex(5); ImGui::Text("%d", item->scoreMaturity);
@@ -2215,6 +3320,8 @@ void AppUI::renderInventoryTab() {
             if (m_repoActionPlanPath != selected->path) {
                 m_repoActionPlanPath.clear();
                 m_repoActionPlan.clear();
+                m_repoActionPlanText.clear();
+                m_repoActionPlanCopyMessage.clear();
             }
             ImGui::SameLine();
             ImGui::BeginChild("##InventoryDetailRegion", ImVec2(detailWidth, 0.f), true);
@@ -2230,9 +3337,39 @@ void AppUI::renderInventoryTab() {
             ImGui::Text("Maturidade: %d", selected->scoreMaturity);
             ImGui::Text("Confiab (Config): %d", selected->scoreReliability);
             ImGui::Text("Confiab (Exec): %d", selected->scoreReliabilityExec);
+            ImGui::Text("OCI: %d", selected->ontologyClarityScore);
+            ImGui::Text("Doc/Codigo: %d", selected->ontologyAlignmentScore);
             ImGui::Text("Build: %s", selected->buildSystem.c_str());
             ImGui::Text("Artefatos: %d", selected->detectedArtifacts);
             ImGui::Text("Integrado: %s", selected->integratedWithLabGestao ? "Sim" : "Nao");
+            ImGui::Separator();
+            ImGui::TextDisabled("Ontologia");
+            ImGui::BulletText("Cobertura de entidades: %d", selected->ontologyEntitiesScore);
+            ImGui::BulletText("Relacoes explicitas: %d", selected->ontologyRelationsScore);
+            ImGui::BulletText("Regras de validacao: %d", selected->ontologyValidityScore);
+            ImGui::BulletText("Regras de identidade: %d", selected->ontologyIdentityScore);
+            ImGui::BulletText("Entidades declaradas/implementadas: %zu/%zu",
+                selected->ontologyDeclaredEntities.size(),
+                selected->ontologyImplementedEntities.size());
+            ImGui::BulletText("Relacoes declaradas/implementadas: %zu/%zu",
+                selected->ontologyDeclaredRelations.size(),
+                selected->ontologyImplementedRelations.size());
+            if (!selected->ontologyEntities.empty()) {
+                std::string entities = "Entidades: ";
+                for (std::size_t i = 0; i < selected->ontologyEntities.size() && i < 8; i++) {
+                    if (i > 0) entities += ", ";
+                    entities += selected->ontologyEntities[i];
+                }
+                ImGui::TextWrapped("%s", entities.c_str());
+            }
+            if (!selected->ontologyRelations.empty()) {
+                std::string relations = "Relacoes: ";
+                for (std::size_t i = 0; i < selected->ontologyRelations.size() && i < 8; i++) {
+                    if (i > 0) relations += ", ";
+                    relations += selected->ontologyRelations[i];
+                }
+                ImGui::TextWrapped("%s", relations.c_str());
+            }
             ImGui::Separator();
             ImGui::TextDisabled("Maturidade");
             ImGui::BulletText("ADR: %s", selected->hasAdr ? "OK" : "-");
@@ -2282,15 +3419,66 @@ void AppUI::renderInventoryTab() {
             if (ImGui::Button("Gerar Plano de Acao")) {
                 m_repoActionPlan = generateActionPlanForRepo(*selected);
                 m_repoActionPlanPath = selected->path;
+                std::ostringstream planText;
+                planText << "Plano de acao - " << selected->name << "\n";
+                planText << "Total=" << selected->scoreTotal
+                         << " | OCI=" << selected->ontologyClarityScore
+                         << " | Doc/Codigo=" << selected->ontologyAlignmentScore
+                         << " | Top OCS=" << selected->ontologyBestCompatibilityScore;
+                if (!selected->ontologyBestCompatibilityRepo.empty()) {
+                    planText << " (" << selected->ontologyBestCompatibilityRepo << ")";
+                }
+                planText << "\n\n";
+                for (std::size_t i = 0; i < m_repoActionPlan.size(); i++) {
+                    planText << (i + 1) << ". " << m_repoActionPlan[i] << "\n";
+                }
+                m_repoActionPlanText = planText.str();
+                m_repoActionPlanCopyMessage.clear();
+            }
+            ImGui::Spacing();
+            ImGui::TextDisabled("Compatibilidade Ontologica (OCS)");
+            std::vector<std::pair<int, const RepoInventoryEntry*>> compat;
+            compat.reserve(m_repoInventory.size());
+            for (const auto& candidate : m_repoInventory) {
+                if (candidate.path == selected->path) continue;
+                compat.push_back({cachedOntologyCompatibilityScore(*selected, candidate), &candidate});
+            }
+            std::stable_sort(compat.begin(), compat.end(), [](const auto& a, const auto& b) {
+                if (a.first != b.first) return a.first > b.first;
+                return a.second->name < b.second->name;
+            });
+            if (compat.empty()) {
+                ImGui::TextDisabled("Sem outros repositorios para comparar.");
+            } else {
+                const std::size_t maxCompat = std::min<std::size_t>(5, compat.size());
+                for (std::size_t i = 0; i < maxCompat; i++) {
+                    const char* action =
+                        compat[i].first >= 70 ? "integrar" :
+                        compat[i].first >= 40 ? "alinhar" : "separar";
+                    ImGui::BulletText("%s | OCS=%d | %s",
+                        compat[i].second->name.c_str(),
+                        compat[i].first,
+                        action);
+                }
             }
             if (m_repoActionPlanPath == selected->path && !m_repoActionPlan.empty()) {
                 ImGui::TextDisabled("Plano sugerido");
-                ImGui::PushTextWrapPos(0.0f);
-                for (std::size_t i = 0; i < m_repoActionPlan.size(); i++) {
-                    const std::string line = std::to_string(i + 1) + ". " + m_repoActionPlan[i];
-                    ImGui::TextWrapped("%s", line.c_str());
+                if (ImGui::Button("Copiar Plano")) {
+                    ImGui::SetClipboardText(m_repoActionPlanText.c_str());
+                    m_repoActionPlanCopyMessage = "Plano copiado.";
                 }
-                ImGui::PopTextWrapPos();
+                ImGui::SameLine();
+                ImGui::TextDisabled("Texto selecionavel");
+                if (!m_repoActionPlanCopyMessage.empty()) {
+                    ImGui::TextDisabled("%s", m_repoActionPlanCopyMessage.c_str());
+                }
+                ImGui::InputTextMultiline(
+                    "##repo_action_plan_text",
+                    const_cast<char*>(m_repoActionPlanText.c_str()),
+                    m_repoActionPlanText.size() + 1,
+                    ImVec2(-1.f, 180.f),
+                    ImGuiInputTextFlags_ReadOnly
+                );
             }
             ImGui::EndChild();
         } else {
@@ -2304,6 +3492,7 @@ void AppUI::renderInventoryTab() {
     ImGui::TextDisabled("Operacional: README(20)+CI(20)+Testes(15)+Build(20)+Gitignore(10)+License(5)+SemArtefatos(10)");
     ImGui::TextDisabled("Maturidade: ADR(25)+DDD(25)+DAI(25)+Governanca(0..25 via 0..8 sinais)");
     ImGui::TextDisabled("Confiabilidade (Config/Exec): ASan/UBSan(15)+Leak(10)+Static(20)+Warnings(15)+Complex(15)+Cycles(10)+Format(15)");
+    ImGui::TextDisabled("OCI: entidades, relacoes, validade e identidade ajustadas pela coerencia documento/codigo.");
     ImGui::TextDisabled("Total: Operacional*0.45 + Maturidade*0.30 + ConfiabCfg*0.15 + ConfiabExec*0.10");
 }
 
@@ -2321,6 +3510,29 @@ std::vector<std::string> AppUI::generateActionPlanForRepo(const RepoInventoryEnt
     if (!repo.hasAdr) plan.push_back("Registrar ao menos 1 ADR sobre decisoes estruturais atuais.");
     if (!repo.hasDdd) plan.push_back("Criar documento DDD basico (contexto, limites, linguagem ubíqua).");
     if (!repo.hasDai) plan.push_back("Abrir backlog DAI com donos e status para riscos/acoes.");
+    if (repo.ontologyClarityScore < 50) plan.push_back("Definir ontologia minima versionada com entidades, relacoes, regras de validade e identidade.");
+    if (repo.ontologyAlignmentScore < 50) plan.push_back("Reconciliar DDD/ADR/README com a estrutura real: mapear entidades declaradas para tipos/modulos e relacoes para includes/imports/build.");
+    if (repo.ontologyEntitiesScore < 50) plan.push_back("Listar entidades canonicas do dominio para tornar comparacao e integracao viaveis.");
+    if (repo.ontologyRelationsScore < 50) plan.push_back("Explicitar relacoes formais entre entidades e eventos do sistema.");
+    if (repo.ontologyValidityScore == 0) plan.push_back("Adicionar regras de validacao/invariantes para deixar criterios de verdade auditaveis.");
+    if (repo.ontologyIdentityScore == 0) plan.push_back("Definir regra de identidade canonica para distinguir elementos do sistema.");
+    int bestOcs = 0;
+    int compatiblePairs = 0;
+    int alignmentPairs = 0;
+    for (const auto& candidate : m_repoInventory) {
+        if (candidate.path == repo.path) continue;
+        const int ocs = cachedOntologyCompatibilityScore(repo, candidate);
+        bestOcs = std::max(bestOcs, ocs);
+        if (ocs >= 70) compatiblePairs++;
+        else if (ocs >= 40) alignmentPairs++;
+    }
+    if (bestOcs < 40 && m_repoInventory.size() > 1) {
+        plan.push_back("Revisar OCS: nenhum par compativel forte; explicitar fronteiras, vocabulario comum e contratos antes de integrar.");
+    } else if (alignmentPairs > 0 && compatiblePairs == 0) {
+        plan.push_back("Melhorar OCS com repos em alinhamento: mapear entidades equivalentes, relacoes compartilhadas e regras divergentes.");
+    } else if (compatiblePairs > 0 && repo.ontologyClarityScore < 80) {
+        plan.push_back("Elevar OCI antes de integrar pares com OCS alto: documentar entidades e relacoes canonicas, vincular cada entidade aos tipos/modulos implementados, declarar regras de validade e definir identidade canonica.");
+    }
     if (repo.governanceSignals == 0) plan.push_back("Adicionar governanca minima: CONTRIBUTING, templates PR/Issue, CODEOWNERS, policies e contratos de ferramenta.");
     if (!repo.hasPolicies) plan.push_back("Versionar policies explicitas para uso de IA, seguranca e fronteiras de contexto.");
     if (!repo.hasToolContracts) plan.push_back("Criar contratos executaveis para ferramentas/agentes e validar precondicoes/evidencias.");
@@ -2359,7 +3571,7 @@ bool AppUI::exportInventoryCsv(std::string* outputPath, std::string* errorMsg) c
         return false;
     }
 
-    out << "repo,path,score_total,score_engineering_discipline,score_vibe_risk,score_operational,score_maturity,score_reliability_config,score_reliability_exec,build,adr,ddd,dai,policies,tool_contracts,approval_policy,audit_evidence,governance_signals,asan_ubsan_cfg,leak_check_cfg,static_analysis_cfg,strict_warnings_cfg,complexity_guard_cfg,cycle_guard_cfg,format_lint_cfg,asan_ubsan_exec,leak_check_exec,static_analysis_exec,strict_warnings_exec,complexity_guard_exec,cycle_guard_exec,format_lint_exec,readme,ci,tests,gitignore,license,artifacts,integrated\n";
+    out << "repo,path,score_total,score_engineering_discipline,score_vibe_risk,score_operational,score_maturity,score_reliability_config,score_reliability_exec,ontology_clarity_score,ontology_entities_score,ontology_relations_score,ontology_validity_score,ontology_identity_score,ontology_alignment_score,ontology_entities_count,ontology_relations_count,ontology_declared_entities_count,ontology_implemented_entities_count,ontology_declared_relations_count,ontology_implemented_relations_count,build,adr,ddd,dai,policies,tool_contracts,approval_policy,audit_evidence,governance_signals,asan_ubsan_cfg,leak_check_cfg,static_analysis_cfg,strict_warnings_cfg,complexity_guard_cfg,cycle_guard_cfg,format_lint_cfg,asan_ubsan_exec,leak_check_exec,static_analysis_exec,strict_warnings_exec,complexity_guard_exec,cycle_guard_exec,format_lint_exec,readme,ci,tests,gitignore,license,artifacts,integrated\n";
     for (const auto& item : m_repoInventory) {
         out << escapeCsvField(item.name) << ","
             << escapeCsvField(item.path) << ","
@@ -2370,6 +3582,18 @@ bool AppUI::exportInventoryCsv(std::string* outputPath, std::string* errorMsg) c
             << item.scoreMaturity << ","
             << item.scoreReliability << ","
             << item.scoreReliabilityExec << ","
+            << item.ontologyClarityScore << ","
+            << item.ontologyEntitiesScore << ","
+            << item.ontologyRelationsScore << ","
+            << item.ontologyValidityScore << ","
+            << item.ontologyIdentityScore << ","
+            << item.ontologyAlignmentScore << ","
+            << item.ontologyEntities.size() << ","
+            << item.ontologyRelations.size() << ","
+            << item.ontologyDeclaredEntities.size() << ","
+            << item.ontologyImplementedEntities.size() << ","
+            << item.ontologyDeclaredRelations.size() << ","
+            << item.ontologyImplementedRelations.size() << ","
             << escapeCsvField(item.buildSystem) << ","
             << (item.hasAdr ? "1" : "0") << ","
             << (item.hasDdd ? "1" : "0") << ","
@@ -2437,6 +3661,18 @@ bool AppUI::exportInventoryJson(std::string* outputPath, std::string* errorMsg) 
             {"score_maturity", item.scoreMaturity},
             {"score_reliability_config", item.scoreReliability},
             {"score_reliability_exec", item.scoreReliabilityExec},
+            {"ontology_clarity_score", item.ontologyClarityScore},
+            {"ontology_entities_score", item.ontologyEntitiesScore},
+            {"ontology_relations_score", item.ontologyRelationsScore},
+            {"ontology_validity_score", item.ontologyValidityScore},
+            {"ontology_identity_score", item.ontologyIdentityScore},
+            {"ontology_alignment_score", item.ontologyAlignmentScore},
+            {"ontology_entities", item.ontologyEntities},
+            {"ontology_relations", item.ontologyRelations},
+            {"ontology_declared_entities", item.ontologyDeclaredEntities},
+            {"ontology_implemented_entities", item.ontologyImplementedEntities},
+            {"ontology_declared_relations", item.ontologyDeclaredRelations},
+            {"ontology_implemented_relations", item.ontologyImplementedRelations},
             {"build", item.buildSystem},
             {"adr", item.hasAdr},
             {"ddd", item.hasDdd},

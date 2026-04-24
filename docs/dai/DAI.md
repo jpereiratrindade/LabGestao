@@ -10,6 +10,12 @@ Formato recomendado:
 
 ## Entradas
 
+### 2026-04-24
+- Decision: tratar o LabGestao como ambiente laboratorial de analise, caracterizacao e avaliacao de sistemas, e nao apenas como sistema de gestao ou painel de metricas.
+- Decision: interpretar `OCI` e `OCS` como expressoes formais de observacao ontologica e estrutural, vinculadas ao papel analitico do LabGestao.
+- Action: registrar a decisao em `ADR-0008` e refletir a formulacao em `DDD.md`, `METRICS_REFERENCE.md` e nos documentos de fundamentacao ontologica.
+- Action: usar o IdeaWalker como teste aplicado das recomendacoes geradas pelo LabGestao, mantendo OCS como frente de alinhamento conceitual entre repositorios.
+
 ### 2026-03-24
 - Decision: tratar governanca assistida por IA como capacidade operacional baseada em evidencia, e nao apenas como presenca de artefatos.
 - Decision: ampliar a leitura do inventario para distinguir governanca superficial de governanca normativa/operacional.

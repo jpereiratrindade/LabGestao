@@ -1,0 +1,544 @@
+\documentclass[12pt,a4paper]{article}
+
+\usepackage[brazil]{babel}
+\usepackage{lmodern}
+\usepackage{amsmath}
+\usepackage{amsfonts}
+\usepackage{listings}
+% -----------------------------------------------------------------------
+% PACOTES ESSENCIAIS
+% -----------------------------------------------------------------------
+\usepackage[utf8]{inputenc}        % Codificação do documento
+\usepackage[T1]{fontenc}           % Codificação da fonte
+\usepackage{microtype}             % Melhora a justificação
+\usepackage{graphicx}              % Inclusão de figuras
+\usepackage{indentfirst}           % Indenta o primeiro parágrafo
+\usepackage{longtable}             % Tabelas longas
+\usepackage{enumitem}              % Listas personalizáveis
+\usepackage{hyperref}              % Hyperlinks
+\usepackage{geometry}              % Ajuste de margens
+\usepackage{titlesec}              % Customização dos títulos, se necessário
+\usepackage[alf]{abntex2cite}
+
+% -----------------------------------------------------------------------
+% MARGENS (padrão ABNT é mais largas; aqui deixo como pediste)
+% -----------------------------------------------------------------------
+\geometry{
+	left=2.5cm,
+	right=2.5cm,
+	top=2.5cm,
+	bottom=2.5cm
+}
+
+% -----------------------------------------------------------------------
+% CONFIGURAÇÕES DO HYPERREF
+% -----------------------------------------------------------------------
+\hypersetup{
+	colorlinks=true,
+	linkcolor=black,
+	citecolor=black,
+	urlcolor=blue
+}
+
+% -----------------------------------------------------------------------
+% TÍTULO, AUTOR E DATA
+% -----------------------------------------------------------------------
+\title{
+	Ontological Clarity Index (OCI) e Ontological Compatibility Score (OCS):\\
+	Métricas para Convergência e Integração de Sistemas Complexos
+}
+
+\author{José Pedro Trindade\thanks{jose.pereira-trindade@embrapa.br}}
+\date{\today}
+
+\begin{document}
+
+	\maketitle
+	\tableofcontents
+
+
+
+	\section{Introdução}
+
+	Sistemas complexos contemporâneos, especialmente aqueles compostos por múltiplos projetos, módulos ou iniciativas independentes, apresentam um desafio recorrente: a dificuldade de integração, convergência e evolução coordenada.
+
+	Na ausência de critérios estruturados, decisões de integração são frequentemente baseadas em similaridade superficial, proximidade histórica ou julgamento subjetivo. Isso resulta em redundância, fragmentação e aumento do custo de manutenção.
+
+	Este trabalho propõe uma abordagem baseada em explicitação ontológica, introduzindo duas métricas: o \textit{Ontological Clarity Index (OCI)} e o \textit{Ontological Compatibility Score (OCS)}, com o objetivo de tornar sistemas comparáveis, integráveis e analisáveis de forma sistemática.
+
+Diferentemente de abordagens tradicionais que focam em representação ou alinhamento, esta proposta enfatiza a mensuração da qualidade ontológica e da compatibilidade estrutural entre sistemas, estabelecendo uma ponte entre modelagem conceitual e avaliação quantitativa.
+
+\section{Trabalhos Relacionados}
+
+A avaliação e alinhamento de ontologias é um tema amplamente estudado nas áreas de engenharia de conhecimento e web semântica.
+
+Gruber (1993) define ontologias como especificações explícitas de conceitualizações, estabelecendo a base para sua formalização computacional.
+
+Guarino (1998) amplia essa definição ao introduzir uma distinção entre níveis ontológicos, enfatizando o papel da ontologia formal na modelagem conceitual rigorosa.
+
+No contexto da web semântica, ontologias são frequentemente representadas em linguagens formais como OWL (Web Ontology Language), permitindo inferência automática e interoperabilidade entre sistemas (W3C, 2004).
+
+A literatura sobre alinhamento de ontologias (ontology matching) aborda a identificação de correspondências entre entidades de diferentes ontologias (Euzenat e Shvaiko, 2013), sendo uma área diretamente relacionada ao conceito proposto de compatibilidade ontológica.
+
+Entretanto, a maioria dos trabalhos existentes foca em algoritmos de correspondência ou integração, enquanto há menor ênfase na definição de métricas estruturais que permitam avaliar, de forma sistemática, o grau de clareza interna e compatibilidade entre ontologias.
+
+Neste contexto, o presente trabalho propõe os índices OCI e OCS como métricas complementares, visando preencher essa lacuna ao oferecer uma abordagem quantitativa para análise ontológica.
+
+\section{Fundamentação Ontológica}
+
+O LabGestao configura-se como um ambiente laboratorial de análise, caracterização e avaliação de sistemas. Essa caracterização não se refere a um laboratório experimental clássico, mas a um contexto analítico estruturado no qual práticas, processos, ferramentas e métricas são articulados para observar, descrever, comparar e avaliar outros sistemas.
+
+Nesse sentido, o LabGestao não opera apenas como um sistema de gestão de projetos. Ele funciona também como um dispositivo analítico: um ambiente no qual princípios ontológicos e estruturais são manifestos, operacionalizados e aplicados sobre repositórios observados. O conjunto formado por inventário, governança, métricas, relatórios, recomendações e perfis ontológicos permite que outros sistemas sejam lidos segundo critérios explícitos de clareza, compatibilidade, maturidade e prontidão de integração.
+
+No caso específico de OCI e OCS, as métricas não devem ser interpretadas como indicadores isolados. Elas expressam formas formais de observação: o OCI explicita como um sistema define entidades, relações, validade e identidade; o OCS explicita em que medida dois sistemas podem ser comparados, alinhados ou integrados a partir desses mesmos critérios. Assim, o LabGestao pode ser compreendido como um laboratório virtual de análise ontológica e estrutural de sistemas, pois incorpora em seu próprio modo de operação os princípios que utiliza para avaliar outros sistemas.
+
+No contexto de sistemas computacionais, uma ontologia é definida como uma estrutura formal:
+
+\[
+\mathcal{O} = (E, R, V, I)
+\]
+
+onde:
+
+\begin{itemize}
+	\item \(E\) é um conjunto finito de entidades;
+	\item \(R \subseteq E \times E\) é um conjunto de relações tipadas entre entidades;
+	\item \(V\) é um conjunto de regras de validade (predicados sobre \(E\) e \(R\));
+	\item \(I\) é um conjunto de regras de identidade (funções ou critérios que distinguem elementos de \(E\)).
+\end{itemize}
+
+Essa estrutura permite tratar sistemas como objetos comparáveis, superando descrições informais.
+
+Uma ontologia mínima deve responder a quatro questões fundamentais:
+
+\begin{itemize}
+	\item O que existe no sistema? (Entidades)
+	\item Como essas coisas se relacionam? (Relações)
+	\item O que pode ser considerado válido? (Regras de validade)
+	\item Como distinguir e identificar elementos? (Identidade)
+\end{itemize}
+
+No contexto do LabGestao, essa ontologia mínima convive com artefatos de engenharia que não são ontologia em si, mas funcionam como fontes de explicitação, evidência e rastreabilidade:
+
+\begin{itemize}
+	\item \textbf{DDD}: principal fonte para identificar entidades, relações, fronteiras e linguagem ubíqua;
+	\item \textbf{ADR}: explicita decisões arquiteturais e restrições relevantes para a interpretação ontológica;
+	\item \textbf{DAI}: registra decisões, ações e impedimentos que contextualizam a evolução estrutural do sistema;
+	\item \textbf{CI}: não define ontologia diretamente, mas fornece evidência operacional de validação e disciplina de execução.
+\end{itemize}
+
+\subsection{Definição Operacional de Entidade}
+
+A definição de entidade é central para a consistência do \textit{Ontological Clarity Index} (OCI) e do \textit{Ontological Compatibility Score} (OCS). Embora a ontologia proposta represente \(E\) como um conjunto finito de entidades, essa formulação, por si só, ainda é insuficiente para garantir comparabilidade, reprodutibilidade e rigor analítico. Sem uma definição operacional mais precisa, diferentes avaliadores podem classificar como entidade elementos heterogêneos, produzindo variações artificiais no cálculo das métricas.
+
+Em termos práticos, quase qualquer componente de um sistema poderia ser tratado como entidade: objetos do domínio, módulos técnicos, documentos, eventos, atores, métricas, processos ou artefatos de governança. Essa elasticidade conceitual compromete a robustez da avaliação, pois permite inflacionar ou reduzir o conjunto \(E\) sem critério ontológico suficientemente explícito.
+
+Diante disso, propõe-se a seguinte definição operacional:
+
+\begin{quote}
+	Uma entidade é um elemento ontologicamente relevante do domínio que possui identidade distinguível, participa de relações estruturais, pode ser submetido a regras de validade e apresenta papel persistente na interpretação do sistema.
+\end{quote}
+
+Essa definição permite distinguir entidades propriamente ditas de elementos auxiliares, contextuais ou instrumentais. Em termos formais, pode-se representar o conjunto de entidades como:
+
+\[
+E = \{x \mid x \text{ possui identidade, papel estrutural e relevância ontológica no domínio}\}
+\]
+
+\subsubsection{Critérios para Reconhecimento de Entidades}
+
+Para fins de análise, um elemento só deve ser incorporado ao conjunto \(E\) quando satisfizer, ao menos de modo predominante, os seguintes critérios:
+
+\begin{itemize}
+	\item \textbf{Identidade própria}: o elemento pode ser distinguido de outros elementos do mesmo tipo;
+	\item \textbf{Persistência conceitual}: o elemento mantém significado estável ao longo do sistema, não sendo apenas uma ocorrência ocasional;
+	\item \textbf{Capacidade relacional}: o elemento participa de relações estruturalmente relevantes;
+	\item \textbf{Validade avaliável}: o elemento pode ser submetido a regras, restrições ou critérios de consistência;
+	\item \textbf{Relevância de domínio}: o elemento é constitutivo do domínio analisado, e não apenas suporte técnico ou documental.
+\end{itemize}
+
+Esses critérios reduzem arbitrariedades e tornam mais transparente a distinção entre o que pertence ao núcleo ontológico do sistema e o que atua apenas como evidência, contexto ou mecanismo de suporte.
+
+\subsubsection{Camadas de Classificação Ontológica}
+
+Para reforçar a precisão analítica, recomenda-se distinguir pelo menos quatro camadas:
+
+\begin{enumerate}
+	\item \textbf{Entidades de domínio}: representam aquilo que o sistema reconhece como existente no problema tratado, como \textit{Project}, \textit{Metric}, \textit{Event}, \textit{Actor} ou \textit{Recommendation};
+
+	\item \textbf{Entidades técnicas}: elementos existentes na infraestrutura ou implementação, como \textit{Repository}, \textit{API}, \textit{Database}, \textit{Pipeline} ou \textit{CIJob};
+
+	\item \textbf{Artefatos de governança e documentação}: elementos como DDD, ADR, DAI, políticas e esquemas, que funcionam como fontes de explicitação e evidência, mas que não devem ser considerados automaticamente entidades ontológicas do domínio;
+
+	\item \textbf{Eventos ou estados derivados}: elementos como \textit{ValidationFailure}, \textit{Deployment} ou \textit{IntegrationDecision}, cuja classificação como entidade depende de seu papel estrutural e persistência conceitual.
+\end{enumerate}
+
+Essa diferenciação é especialmente importante porque diversos artefatos de engenharia contribuem para a explicitação da ontologia sem, contudo, constituírem ontologia em si. DDD, ADR, DAI e CI, por exemplo, funcionam como fontes de evidência, rastreabilidade e confiança, mas não devem ser incorporados ao conjunto \(E\) sem justificação conceitual explícita.
+
+\subsubsection{Implicações para o OCI e o OCS}
+
+A explicitação mais rigorosa do conceito de entidade possui impacto direto nas métricas propostas.
+
+Primeiro, melhora a \textbf{comparabilidade}, evitando que projetos distintos sejam avaliados a partir de critérios incompatíveis sobre o que conta como entidade.
+
+Segundo, aumenta a \textbf{reprodutibilidade}, pois reduz a dependência de julgamentos implícitos na construção de \(E_{expected}\) e \(E_{detected}\).
+
+Terceiro, fortalece a \textbf{consistência do OCS}, uma vez que o alinhamento entre ontologias depende, em primeiro lugar, da qualidade da delimitação de suas entidades. Se os conjuntos de entidades forem formados por critérios heterogêneos, o valor de \(M_E\) poderá refletir apenas correspondências superficiais, e não compatibilidade ontológica efetiva.
+
+Desse modo, a clareza na definição de entidade não deve ser tratada como detalhe metodológico secundário, mas como fundamento da validade analítica do framework proposto.
+
+\subsubsection{Nota Metodológica}
+
+Nem todo componente mencionado em artefatos de engenharia constitui uma entidade ontológica. Documentos, decisões, mecanismos técnicos e evidências operacionais devem ser distinguidos de entidades de domínio, ainda que possam servir como fontes relevantes para sua inferência. Essa distinção é necessária para evitar que o OCI seja reduzido a uma contagem heurística de termos recorrentes, preservando seu caráter de métrica voltada à explicitação ontológica do sistema.
+
+\section{Ontological Clarity Index (OCI)}
+
+\subsection{Definição}
+
+O OCI é definido como uma função:
+
+\[
+OCI : \mathcal{O} \rightarrow [0,1]
+\]
+
+que mede o grau de explicitação ontológica de um sistema.
+
+\subsection{Componentes}
+
+Dada uma ontologia \(\mathcal{O} = (E, R, V, I)\), definimos quatro funções de avaliação:
+
+\begin{itemize}
+	\item \(C_E(E)\): cobertura e definição das entidades;
+	\item \(C_R(R)\): explicitação e completude das relações;
+	\item \(C_V(V)\): formalização das regras de validade;
+	\item \(C_I(I)\): clareza dos critérios de identidade.
+\end{itemize}
+
+Cada componente é normalizado no intervalo \([0,1]\), de acordo com critérios explícitos de avaliação (por exemplo: completude, ausência de ambiguidade e verificabilidade).
+
+\subsection{Formulação Operacional}
+
+Para garantir reprodutibilidade, os componentes são definidos como:
+
+\[
+C_E = \frac{|E_{detected} \cap E_{expected}|}{|E_{expected}|}
+\]
+
+\[
+C_R = \frac{|R_{detected} \cap R_{expected}|}{|R_{expected}|}
+\]
+
+\[
+C_V \in \{0, 0.5, 1\}
+\quad
+C_I \in \{0, 0.5, 1\}
+\]
+
+\subsection{Definição de Referência}
+
+Os conjuntos \(E_{expected}\) e \(R_{expected}\) são definidos por:
+
+\begin{itemize}
+	\item ontologia canônica do domínio;
+	\item artefatos de modelagem do projeto, especialmente DDD;
+	\item baseline manual do projeto.
+\end{itemize}
+
+Em termos operacionais, o DDD tende a ser a principal fonte para definição de \(E_{expected}\) e \(R_{expected}\), enquanto ADR e DAI atuam como artefatos auxiliares de contextualização e rastreabilidade.
+
+\subsection{Observação}
+
+A normalização exige definição prévia de um espaço de referência (por exemplo, domínio esperado ou requisitos do sistema), evitando arbitrariedade na avaliação.
+
+\section{Ontological Compatibility Score (OCS)}
+
+\subsection{Definição}
+
+O OCS é definido como uma função:
+
+\[
+OCS : \mathcal{O}_A \times \mathcal{O}_B \rightarrow [0,1]
+\]
+
+que mede o grau de compatibilidade entre duas ontologias.
+
+\subsection{Componentes}
+
+Sejam duas ontologias:
+
+\[
+\mathcal{O}_A = (E_A, R_A, V_A, I_A), \quad
+\mathcal{O}_B = (E_B, R_B, V_B, I_B)
+\]
+
+Definimos:
+
+\begin{itemize}
+	\item \(M_E(E_A, E_B)\): grau de alinhamento entre entidades;
+	\item \(M_R(R_A, R_B)\): compatibilidade estrutural das relações;
+	\item \(M_V(V_A, V_B)\): consistência entre regras de validade;
+	\item \(M_I(I_A, I_B)\): compatibilidade dos critérios de identidade.
+\end{itemize}
+
+\subsection{Formulação}
+Para garantir consistência com os axiomas:
+
+\[
+OCS =
+\begin{cases}
+	0, & \text{se } M_E = 0 \\
+	\frac{M_E + M_R + M_V + M_I}{4}, & \text{caso contrário}
+\end{cases}
+\]
+
+\subsection{Observação}
+
+Essa definição garante que não há compatibilidade ontológica sem interseção semântica mínima entre entidades, evitando falsos positivos.
+
+\subsection{Interpretação}
+
+\begin{itemize}
+	\item Alto (>$0.7$): forte potencial de integração
+	\item Médio ($0.4$--$0.7$): requer alinhamento estrutural
+	\item Baixo (<$0.4$): baixa compatibilidade ontológica
+\end{itemize}
+
+A função \(M_E\) pode ser interpretada como um caso particular de alinhamento ontológico, enquanto \(M_R\), \(M_V\) e \(M_I\) ampliam essa noção ao considerar não apenas correspondência estrutural, mas também consistência semântica e validade lógica.
+
+Dessa forma, o OCS generaliza abordagens clássicas de ontology matching ao incorporar múltiplas dimensões de compatibilidade.
+
+\section{Propriedades e Axiomas}
+
+Para garantir consistência e evitar arbitrariedade, propõem-se os seguintes axiomas:
+
+\begin{itemize}
+	\item A1: Ambiguidade reduz \(OCI\)
+	\item A2: Ausência de identidade limita \(OCI\)
+	\item A3: \(OCS(\mathcal{O}, \mathcal{O}) = 1\)
+	\item A4: Se \(M_E = 0\), então \(OCS = 0\)
+	\item A5: Conflitos reduzem \(OCS\)
+\end{itemize}
+
+\section{Fator de Confiança}
+
+Define-se:
+
+\[
+confidence \in [0,1]
+\]
+
+baseado em:
+
+\begin{itemize}
+	\item origem dos dados (código, documentação, heurística)
+	\item presença de artefatos formais (DDD, ADR, contratos, schemas)
+	\item consistência interna detectada
+	\item evidência operacional de validação (incluindo CI)
+\end{itemize}
+
+O fator de confiança não altera a definição ontológica do sistema. Seu papel é ajustar a confiança na medição realizada. Assim, DDD, ADR e DAI funcionam como fontes de estrutura e rastreabilidade, enquanto CI funciona principalmente como evidência de validação operacional.
+
+\[
+OCI_{adj} = OCI \times confidence
+\]
+
+\[
+OCS_{adj} = OCS \times confidence
+\]
+
+\section{Operacionalização Heurística (LabGestao)}
+
+A implementação prática utiliza:
+
+\begin{itemize}
+	\item extração textual (README, DDD, ADR, documentação arquitetural e código fonte)
+	\item identificação de entidades via padrões semânticos
+	\item detecção de relações via verbos estruturais
+	\item validade por presença de regras explícitas
+	\item identidade por identificadores únicos
+\end{itemize}
+
+\subsection{Papel dos Artefatos de Engenharia}
+
+Na operacionalização atual do LabGestao:
+
+\begin{itemize}
+	\item \textbf{DDD} tem peso prioritário para inferir entidades, relações e fronteiras esperadas;
+	\item \textbf{ADR} reforça justificativas estruturais, restrições e decisões de modelagem;
+	\item \textbf{DAI} não define ontologia diretamente, mas ajuda a interpretar estágio e contexto de evolução do projeto;
+	\item \textbf{CI} não aumenta diretamente \(OCI\), mas pode elevar o fator de confiança ao demonstrar validação reprodutível.
+\end{itemize}
+
+\subsection{Limitação}
+
+Essa abordagem pode superestimar entidades em projetos com alta densidade textual.
+
+Além disso, a heurística atual depende de artefatos efetivamente versionados. Repositórios com DDD, ADR ou DAI ausentes no código-fonte, mas presentes apenas em conhecimento tácito ou documentos externos, tendem a receber escores subestimados.
+
+
+\section{Recommendation Engine Ontológico}
+
+Define-se:
+
+\[
+integration\_readiness = OCI \times OCS \times governance
+\]
+
+onde \(governance \in [0,1]\) representa um fator derivado de evidências estruturais e operacionais, incluindo DDD, ADR, DAI, políticas, contratos e sinais de validação.
+
+\subsection{Regras de Decisão}
+
+\begin{itemize}
+	\item OCI baixo → priorizar estrutura ontológica
+	\item OCS alto + OCI baixo → evitar integração prematura
+	\item OCS alto + OCI alto → integrar
+	\item OCS médio → alinhar
+	\item OCS baixo → manter separado
+\end{itemize}
+
+Esse motor não deve ser interpretado como regra mecânica suficiente. Sua função é orientar movimentos de evolução ontológica do sistema, combinando clareza interna, compatibilidade externa e contexto operacional.
+
+
+\section{Exemplo de Cálculo}
+
+Considere uma ontologia com:
+
+\begin{itemize}
+	\item 3 entidades definidas de um total esperado de 4 → \(C_E = 0.75\)
+	\item 2 relações explicitadas de 3 esperadas → \(C_R = 0.67\)
+	\item regras de validade parcialmente definidas → \(C_V = 0.5\)
+	\item identidade bem definida → \(C_I = 1.0\)
+\end{itemize}
+
+Então:
+
+\[
+OCI = \frac{0.75 + 0.67 + 0.5 + 1.0}{4} = 0.73
+\]
+
+\subsection{Exemplo de Compatibilidade}
+
+A compatibilidade entre ontologias pode ser estimada via:
+
+\begin{itemize}
+	\item interseção normalizada de entidades;
+	\item correspondência de relações;
+	\item consistência entre regras de validade e identidade.
+\end{itemize}
+
+
+	\section{Aplicação em Sistemas de Engenharia}
+
+	As métricas propostas podem ser aplicadas em:
+
+	\begin{itemize}
+		\item Portfólios de projetos
+		\item Sistemas modulares
+		\item Arquiteturas distribuídas
+	\end{itemize}
+
+	Quando integradas a estruturas de análise como grafos, permitem identificar:
+
+	\begin{itemize}
+		\item Redundâncias
+		\item Oportunidades de integração
+		\item Gargalos estruturais
+	\end{itemize}
+
+	\section{Exemplo Aplicado}
+
+	Considere dois sistemas:
+
+	\begin{itemize}
+		\item Sistema A: foco em gestão de projetos
+		\item Sistema B: foco em avaliação e métricas
+	\end{itemize}
+
+	Se ambos compartilham entidades como \textit{Project} e \textit{Metric}, mas diferem em regras de validade, o OCS indicará compatibilidade parcial, sugerindo necessidade de alinhamento antes da integração.
+
+\section{Resultados Experimentais}
+
+A análise de 75 repositórios apresentou:
+
+\begin{itemize}
+	\item Média OCI: 42.6
+	\item Alta frequência de:
+	\begin{itemize}
+		\item entidades bem definidas
+		\item ausência de relações
+		\item ausência de identidade
+	\end{itemize}
+\end{itemize}
+
+\subsection{Interpretação}
+
+Os resultados indicam um padrão de:
+
+\begin{quote}
+	estruturação ontológica parcial
+\end{quote}
+
+\subsection{Limitação}
+
+Os valores dependem do método heurístico e devem ser interpretados como aproximação.
+
+	\section{Discussão}
+As métricas propostas avaliam:
+
+\begin{quote}
+	grau de explicitação ontológica e não qualidade funcional do sistema
+\end{quote}
+
+Principais limitações:
+
+\begin{itemize}
+	\item dependência de baseline ontológico
+	\item sensibilidade à qualidade da documentação
+	\item natureza heurística da detecção
+	\item necessidade de calibrar separadamente ontologia, governança e evidência operacional
+\end{itemize}
+
+Apesar disso, os resultados demonstram capacidade de:
+
+\begin{itemize}
+	\item identificar fragilidade estrutural
+	\item sugerir decisões de integração
+	\item revelar padrões sistêmicos
+\end{itemize}
+
+Em particular, a combinação entre DDD, ADR, DAI e CI não deve ser interpretada como substituto da ontologia. O valor desses artefatos está em aumentar a capacidade de explicitação, comparação e confiança da análise. O DDD tende a influenciar mais diretamente o conteúdo ontológico; ADR e DAI reforçam contexto e rastreabilidade; CI reforça evidência operacional.
+		\section{Conclusão}
+
+	Este trabalho propõe um framework ontológico para avaliação de sistemas complexos, baseado nos índices OCI e OCS.
+
+	Sua principal contribuição é a transformação de estruturas conceituais em elementos mensuráveis, permitindo decisões mais informadas sobre integração, evolução e descarte de sistemas.
+
+	Ao tornar ontologias comparáveis, abre-se caminho para arquiteturas mais coerentes, adaptativas e integráveis.
+
+\begin{thebibliography}{9}
+
+	\bibitem{gruber1993}
+	GRUBER, T. R. A translation approach to portable ontology specifications.
+	\textit{Knowledge Acquisition}, 1993.
+
+	\bibitem{guarino1998}
+	GUARINO, N. Formal ontology in information systems.
+	In: \textit{Proceedings of FOIS}, 1998.
+
+	\bibitem{euzenat2013}
+	EUZENAT, J.; SHVAIKO, P.
+	\textit{Ontology Matching}.
+	Springer, 2013.
+
+	\bibitem{w3cowl}
+	W3C. OWL Web Ontology Language Reference.
+	2004.
+
+	\bibitem{bernerslee2001}
+	BERNERS-LEE, T.; HENDLER, J.; LASSILA, O.
+	The Semantic Web.
+	\textit{Scientific American}, 2001.
+
+\end{thebibliography}
+
+\end{document}

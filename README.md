@@ -85,8 +85,13 @@ Estrutura minima gerada:
 ## Governanca tecnica
 
 - DDD: `docs/architecture/DDD.md`
+- DDD Ontology Profile: `docs/architecture/DDD_ONTOLOGY_PROFILE.md`
+- DDD Recommendation Engine: `docs/architecture/DDD_ONTOLOGY_RECOMMENDATION_ENGINE.md`
 - ADRs: `docs/adr/README.md`
 - DAI log: `docs/dai/DAI.md`
+- Ontologia: `docs/ontology/OCI_OCS_FOUNDATION.md`
+- Referencia formal OCI/OCS: `docs/ontology/OCI_OCS_FOUNDATION.tex`
+- Referencia consolidada de metricas: `docs/manuals/METRICS_REFERENCE.md`
 - Manual do scaffold governado: `docs/manuals/GOVERNED_CPP_BOOTSTRAP.md`
 - Manual do inventario e leitura de governanca: `docs/manuals/INVENTORY_GOVERNANCE_MODEL.md`
 
@@ -190,6 +195,12 @@ Nota de arquitetura:
 - Na aba de detalhes do projeto, a UI permite criar ADR e criar/fechar itens DAI.
 - Na aba de detalhes do projeto, a UI agora exibe um `Governance Profile` com maturidade, vibe risk, sinais normativos e proximos passos.
 - A aba de metricas exibe indicadores globais de fluxo (WIP, throughput, aging medio, impedimentos) para janelas de 7/14/30 dias.
+- A referencia completa das formulas e interpretacoes fica em `docs/manuals/METRICS_REFERENCE.md`.
+- A aba `Ontologia` exibe `OCI`, `OCS`, tabela ontologica, detalhe por repositorio e grafo de afinidade ontologica.
+- A aba `Ontologia` exporta:
+  - `ontology-YYYY-MM-DD.csv`
+  - `ontology-YYYY-MM-DD.json`
+  - `ontology-report-YYYY-MM-DD.md`
 
 ## Tabela de projetos
 
@@ -224,6 +235,27 @@ Isso foi feito para distinguir:
 
 - repositorio com “governanca de fachada” (README, templates, CODEOWNERS)
 - repositorio com governanca operacional de verdade (fronteiras, contratos, aprovacao e evidencia)
+
+## Ontologia e convergencia
+
+O LabGestao agora trata ontologia como capacidade observavel do repositorio.
+
+- `OCI` mede clareza ontologica por projeto/repositorio
+- `OCS` mede compatibilidade ontologica entre pares
+- `Ontology Confidence` mede a confianca da leitura ontologica, priorizando `DDD` como fonte estrutural e usando `ADR`, `DAI` e `CI` como evidencia complementar
+
+Base usada no produto:
+
+- `Entidades`
+- `Relacoes`
+- `Regras de validade`
+- `Regras de identidade`
+
+Interpretacao de `OCS`:
+
+- `>= 70`: integrar
+- `>= 40`: alinhar
+- `< 40`: manter separado
 
 ## Workflow recomendado para projetos governados
 

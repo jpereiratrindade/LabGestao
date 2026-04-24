@@ -4,6 +4,7 @@
 #include "ui/GraphView.hpp"
 #include "domain/ProjectStore.hpp"
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace labgestao {
@@ -25,6 +26,12 @@ private:
         std::string name;
         std::string path;
         std::string buildSystem;
+        std::vector<std::string> ontologyEntities;
+        std::vector<std::string> ontologyRelations;
+        std::vector<std::string> ontologyDeclaredEntities;
+        std::vector<std::string> ontologyImplementedEntities;
+        std::vector<std::string> ontologyDeclaredRelations;
+        std::vector<std::string> ontologyImplementedRelations;
         int scoreOperational{0}; // 0..100
         int scoreMaturity{0};    // 0..100
         int scoreReliability{0};     // 0..100 (Config)
@@ -32,6 +39,15 @@ private:
         int scoreEngineeringDiscipline{0}; // 0..100
         int scoreVibeRisk{0};              // 0..100
         int scoreTotal{0};       // 0..100 (50/30/20)
+        int ontologyEntitiesScore{0};   // 0..100
+        int ontologyRelationsScore{0};  // 0..100
+        int ontologyValidityScore{0};   // 0..100
+        int ontologyIdentityScore{0};   // 0..100
+        int ontologyClarityScore{0};    // OCI 0..100
+        int ontologyConfidenceScore{0}; // 0..100
+        int ontologyAlignmentScore{0};  // doc/code coherence 0..100
+        int ontologyBestCompatibilityScore{0}; // best OCS against another repo
+        std::string ontologyBestCompatibilityRepo;
         int detectedArtifacts{0};
         bool hasReadme{false};
         bool hasCi{false};
@@ -72,11 +88,19 @@ private:
     void renderPlanningTab();
     void renderFlowMetricsTab();
     void renderInventoryTab();
+    void renderOntologyTab();
+    void renderOntologyGraph(const std::vector<const RepoInventoryEntry*>& rows);
     RepoInventoryEntry buildRepoInventoryEntry(const std::string& repoPath) const;
     void scanWorkspaceInventory();
     std::vector<const RepoInventoryEntry*> topCriticalRepos(std::size_t limit) const;
+    int computeOntologyCompatibilityScore(const RepoInventoryEntry& lhs, const RepoInventoryEntry& rhs) const;
+    int cachedOntologyCompatibilityScore(const RepoInventoryEntry& lhs, const RepoInventoryEntry& rhs) const;
+    void rebuildOntologyCompatibilityCache();
     bool loadLatestInventorySnapshotMetrics(float* avgTotal, std::string* generatedAt, std::string* errorMsg) const;
     bool exportExecutiveReport(std::string* outputPath, std::string* errorMsg) const;
+    bool exportOntologyCsv(std::string* outputPath, std::string* errorMsg) const;
+    bool exportOntologyJson(std::string* outputPath, std::string* errorMsg) const;
+    bool exportOntologyReport(std::string* outputPath, std::string* errorMsg) const;
     std::vector<std::string> generateActionPlanForRepo(const RepoInventoryEntry& repo) const;
     bool exportInventoryCsv(std::string* outputPath, std::string* errorMsg) const;
     bool exportInventoryJson(std::string* outputPath, std::string* errorMsg) const;
@@ -108,6 +132,7 @@ private:
     int           m_repoSortMode{0}; // 0=Total, 1=Disciplina, 2=Vibe, 3=Operacional, 4=Maturidade, 5=ConfiabCfg, 6=ConfiabExec
     bool          m_repoSortDesc{true};
     std::vector<RepoInventoryEntry> m_repoInventory;
+    std::unordered_map<std::string, int> m_ontologyCompatibilityCache;
     bool          m_repoInventoryScanRunning{false};
     std::vector<std::string> m_pendingRepoInventoryCandidates;
     std::vector<RepoInventoryEntry> m_pendingRepoInventoryEntries;
@@ -117,6 +142,15 @@ private:
     std::string   m_repoSelectedPath;
     std::string   m_repoActionPlanPath;
     std::vector<std::string> m_repoActionPlan;
+    std::string   m_repoActionPlanText;
+    std::string   m_repoActionPlanCopyMessage;
+    std::string   m_ontologySelectedPath;
+    std::string   m_ontologyExportMessage;
+    int           m_ontologyMinOci{0};
+    int           m_ontologyMinOcs{40};
+    float         m_ontologyGraphPanX{0.f};
+    float         m_ontologyGraphPanY{0.f};
+    float         m_ontologyGraphScale{1.f};
     bool          m_governanceRefreshRunning{false};
     std::vector<std::string> m_pendingGovernanceProjectIds;
     std::size_t   m_pendingGovernanceIndex{0};

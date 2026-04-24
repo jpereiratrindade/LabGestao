@@ -3,6 +3,8 @@
 ## Objetivo
 Definir um modelo de dominio claro para gestao de projetos, fluxo de trabalho e decisoes tecnicas/operacionais.
 
+O LabGestao tambem atua como ambiente laboratorial de analise, caracterizacao e avaliacao de sistemas: ele observa repositorios, extrai sinais estruturais, calcula metricas, compara perfis e gera recomendacoes. Essa capacidade analitica faz parte do dominio e deve orientar a evolucao de `OntologyProfile`, `GovernanceProfile`, inventario e relatorios.
+
 ## Contextos Delimitados
 
 ### 1) Portfolio de Projetos
@@ -73,6 +75,28 @@ Responsavel por distinguir apoio tecnico simples de contexto governado com evide
   - o inventario deve apoiar leitura proporcional ao risco, e nao apenas checklist documental
   - o snapshot de governanca deve poder ser persistido junto ao projeto para reutilizacao na aplicacao
 
+### 7) Ontologia Comparavel
+Responsavel por tornar repositorios comparaveis do ponto de vista conceitual e estrutural.
+
+- Entidade conceitual: `OntologyProfile` (por repositorio inventariado)
+- Componentes:
+  - `entities`
+  - `relations`
+  - `validity_rules`
+  - `identity_rules`
+- Metricas:
+  - `OCI` (`Ontological Clarity Index`)
+  - `OCS` (`Ontological Compatibility Score`)
+- Regras:
+  - um repositorio nao precisa de ontologia perfeita, mas precisa de ontologia suficiente para comparacao
+  - `OCI` deve refletir clareza minima do repositorio sobre o que existe, como se relaciona, o que e valido e como se identifica
+  - `OCS` deve apoiar decisao de integrar, alinhar ou manter separado
+  - `OntologyConfidence` deve refletir a confianca na leitura ontologica a partir de DDD, ADR, DAI, CI e evidencias complementares
+  - a referencia formal da abordagem fica em `docs/ontology/OCI_OCS_FOUNDATION.tex`
+  - o detalhamento de `OntologyProfile` e do motor de recomendacao fica em:
+    - `docs/architecture/DDD_ONTOLOGY_PROFILE.md`
+    - `docs/architecture/DDD_ONTOLOGY_RECOMMENDATION_ENGINE.md`
+
 ## Agregados e Fronteiras
 
 - Agregado principal: `Project`
@@ -102,6 +126,13 @@ Responsavel por distinguir apoio tecnico simples de contexto governado com evide
 - Tool Contract
 - Evidence Log
 - Governance Task Packet
+- Ontology Profile
+- OCI
+- OCS
+- Entidade
+- Relacao
+- Regra de Validade
+- Regra de Identidade
 
 ## Aplicacao
 A camada de UI (`src/ui`) orquestra casos de uso e aciona regras de dominio (`src/domain`).
@@ -109,6 +140,7 @@ A inicializacao (`src/app/AppRuntime.cpp`) sincroniza auto-descoberta e aplica r
 Persistencia atual via JSON em `<data_dir>/projects.json`, com configuracao em `~/.config/labgestao/settings.json`.
 O inventario da UI tambem constroi uma leitura derivada de governanca/disciplinas de engenharia sobre os repositorios monitorados.
 O `GovernanceProfile` agora integra o modelo de `Project`, com analise gerada pela camada de aplicacao e persistida no `projects.json`.
+O inventario tambem constroi um `OntologyProfile` heuristico, exposto na aba `Ontologia` e nas exportacoes dedicadas.
 
 ## Estado atual (2026-03-24)
 - Ja existem testes automatizados de dominio/persistencia/scaffold em `tests/domain/DomainTests.cpp`.
@@ -119,6 +151,7 @@ O `GovernanceProfile` agora integra o modelo de `Project`, com analise gerada pe
 - O inventario passou a considerar sinais normativos fortes (`policies`, `tool contracts`, `approval matrix`, `audit/evidence`) alem de `ADR`, `DDD` e `DAI`.
 - O score de maturidade/governanca foi ajustado para distinguir governanca de fachada de governanca operacional.
 - O painel de detalhe do projeto passou a usar o `governance_profile` persistido, com atualizacao via `Application Services`.
+- OCI e OCS foram incorporados ao inventario, a uma aba dedicada de ontologia, ao grafo ontologico e a exportacoes especificas.
 
 ## Politica de Reclassificacao (Kanban Auto)
 Aplicada para projetos auto-descobertos:
@@ -138,3 +171,4 @@ Transicoes validas devem passar por `canMoveToStatus` e ser registradas em `stat
 2. Expandir cobertura de testes para camada de aplicacao (casos de uso), mantendo os testes de dominio existentes.
 3. Criar validadores adicionais de invariantes de dominio fora da camada de apresentacao.
 4. Evoluir o `GovernanceProfile` de snapshot analitico para capacidade mais completa de workflow institucional, incluindo ciclos de aprovacao e evidencias estruturadas.
+5. Refinar o `OntologyProfile` com ontologias canonicas por dominio e reduzir dependencia de heuristica textual.

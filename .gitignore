@@ -8,6 +8,15 @@ obj/
 *.a
 *.so
 
+# LaTeX generated files
+docs/ontology/*.aux
+docs/ontology/*.idx
+docs/ontology/*.log
+docs/ontology/*.out
+docs/ontology/*.pdf
+docs/ontology/*.synctex.gz
+docs/ontology/*.toc
+
 # Data and local settings
 data/*.json
 !data/.gitkeep
