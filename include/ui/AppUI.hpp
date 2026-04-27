@@ -62,6 +62,7 @@ private:
         bool hasToolContracts{false};
         bool hasApprovalPolicy{false};
         bool hasAuditEvidence{false};
+        bool hasOcsAlignmentEvidence{false};
         int governanceSignals{0}; // 0..8
         bool hasAsanUbsan{false};
         bool hasLeakCheck{false};
@@ -89,6 +90,7 @@ private:
     void renderFlowMetricsTab();
     void renderInventoryTab();
     void renderOntologyTab();
+    void renderMetricsPcoaOrdination();
     void renderOntologyGraph(const std::vector<const RepoInventoryEntry*>& rows);
     RepoInventoryEntry buildRepoInventoryEntry(const std::string& repoPath) const;
     void scanWorkspaceInventory();
@@ -104,6 +106,7 @@ private:
     std::vector<std::string> generateActionPlanForRepo(const RepoInventoryEntry& repo) const;
     bool exportInventoryCsv(std::string* outputPath, std::string* errorMsg) const;
     bool exportInventoryJson(std::string* outputPath, std::string* errorMsg) const;
+    bool exportRepoCharacterizationReport(const RepoInventoryEntry& repo, std::string* outputPath, std::string* errorMsg) const;
     bool exportFlowMetricsCsv(int windowDays, std::string* outputPath, std::string* errorMsg) const;
 
     ProjectStore& m_store;
@@ -113,6 +116,7 @@ private:
     KanbanView    m_kanban;
     GraphView     m_graph;
     int           m_metricsPeriodIdx{0};
+    bool          m_metricsPcoaShowLabels{false};
     std::string   m_metricsExportMessage;
     std::string   m_metricsActionMessage;
     std::vector<std::string> m_metricsTopCriticalPlan;

@@ -6,6 +6,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cctype>
 #include <cstring>
 #include <cstdio>
 #include <cstdlib>
@@ -184,6 +185,25 @@ std::string toLowerAscii(std::string value) {
     return value;
 }
 
+std::string safeFileSlug(std::string value) {
+    value = toLowerAscii(std::move(value));
+    std::string out;
+    out.reserve(value.size());
+    bool lastDash = false;
+    for (unsigned char c : value) {
+        const bool ok = std::isalnum(c) || c == '_' || c == '-';
+        if (ok) {
+            out.push_back(static_cast<char>(c));
+            lastDash = false;
+        } else if (!lastDash && !out.empty()) {
+            out.push_back('-');
+            lastDash = true;
+        }
+    }
+    while (!out.empty() && out.back() == '-') out.pop_back();
+    return out.empty() ? "repo" : out;
+}
+
 bool pathEqualsBestEffort(const std::string& lhs, const std::string& rhs) {
     if (lhs.empty() || rhs.empty()) return false;
     std::error_code ecA;
@@ -244,6 +264,8 @@ std::string detectBuildSystem(const fs::path& root) {
 bool hasTestsLayout(const fs::path& root) {
     if (fs::exists(root / "tests") && fs::is_directory(root / "tests")) return true;
     if (fs::exists(root / "test") && fs::is_directory(root / "test")) return true;
+    if (fs::exists(root / "src" / "test") && fs::is_directory(root / "src" / "test")) return true;
+    if (fs::exists(root / "src" / "tests") && fs::is_directory(root / "src" / "tests")) return true;
     if (fs::exists(root / "CTestTestfile.cmake")) return true;
     return false;
 }
@@ -381,6 +403,13 @@ bool isReliabilityRelevantFile(const std::string& relPathLower) {
     if (relPathLower.find("valgrind") != std::string::npos) return true;
     if (relPathLower.find("sanitizer") != std::string::npos) return true;
     if (relPathLower.find("quality") != std::string::npos) return true;
+    if (relPathLower.rfind("scripts/", 0) == 0 &&
+        (relPathLower.find("check") != std::string::npos ||
+         relPathLower.find("audit") != std::string::npos ||
+         relPathLower.find("quality") != std::string::npos ||
+         relPathLower.find("lint") != std::string::npos)) {
+        return true;
+    }
     return false;
 }
 
@@ -406,6 +435,10 @@ bool repoHasAnyPatternInRelevantFiles(const fs::path& root, const std::vector<st
         std::string relLow = toLowerAscii(rel);
         std::replace(relLow.begin(), relLow.end(), '\\', '/');
         if (!isReliabilityRelevantFile(relLow)) continue;
+
+        for (const auto& pattern : patterns) {
+            if (relLow.find(pattern) != std::string::npos) return true;
+        }
 
         std::string content;
         if (!readSmallTextFile(root / fs::path(rel), &content)) continue;
@@ -534,6 +567,12 @@ bool hasAuditEvidence(const fs::path& root) {
     if (hasAnyFile(root / "prompts", {"governance_task_packet.md", "task_template.md"})) return true;
     if (hasAnyFile(root / "scripts", {"validate_governance_repo.py", "audit_governance.sh"})) return true;
     return hasFileNameToken(root, {"evidence_log", "audit", "traceability", "governance_task_packet"}, 4);
+}
+
+bool hasOcsAlignmentEvidence(const fs::path& root) {
+    if (hasAnyFile(root / "docs" / "ontology", {"OCS_ALIGNMENT_LABGESTAO.md", "ocs_alignment_labgestao.md"})) return true;
+    if (hasAnyFile(root / "docs", {"OCS_ALIGNMENT_LABGESTAO.md", "ocs_alignment_labgestao.md"})) return true;
+    return hasFileNameToken(root, {"ocs_alignment", "ocs-alignment", "ontology_alignment", "ontological_alignment"}, 5);
 }
 
 int governanceSignalsCount(const fs::path& root) {
@@ -1034,6 +1073,26 @@ std::string escapeCsvField(const std::string& value) {
     return out;
 }
 
+std::string joinMarkdownList(const std::vector<std::string>& values, std::size_t limit = 0) {
+    if (values.empty()) return "-";
+    const std::size_t count = limit == 0 ? values.size() : std::min(limit, values.size());
+    std::string out;
+    for (std::size_t i = 0; i < count; i++) {
+        if (i > 0) out += ", ";
+        out += "`" + values[i] + "`";
+    }
+    if (count < values.size()) {
+        out += ", ... (";
+        out += std::to_string(values.size() - count);
+        out += " restantes)";
+    }
+    return out;
+}
+
+const char* okDash(bool value) {
+    return value ? "OK" : "-";
+}
+
 }
 
 AppUI::RepoInventoryEntry AppUI::buildRepoInventoryEntry(const std::string& repoPathString) const {
@@ -1070,6 +1129,7 @@ AppUI::RepoInventoryEntry AppUI::buildRepoInventoryEntry(const std::string& repo
     item.hasToolContracts = hasToolContractsEvidence(repoPath);
     item.hasApprovalPolicy = hasApprovalPolicyEvidence(repoPath);
     item.hasAuditEvidence = hasAuditEvidence(repoPath);
+    item.hasOcsAlignmentEvidence = hasOcsAlignmentEvidence(repoPath);
     item.governanceSignals = governanceSignalsCount(repoPath);
     item.hasGovernance = item.governanceSignals > 0;
     item.scoreMaturity = computeMaturityScore(item.hasAdr, item.hasDdd, item.hasDai, item.governanceSignals);
@@ -1135,7 +1195,7 @@ AppUI::RepoInventoryEntry AppUI::buildRepoInventoryEntry(const std::string& repo
     const bool hasWerror = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"-werror"});
     item.hasStrictWarnings = hasWall && hasWextra && (hasWpedantic || hasWerror);
     item.hasComplexityGuard = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"lizard", "oclint", "function-size", "cyclomatic", "cognitive complexity"});
-    item.hasCycleGuard = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"include-cycle", "dependency cycle", "cycle check", "deptrac", "module deps"});
+    item.hasCycleGuard = repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"include-cycle", "include_cycles", "check_include_cycles", "dependency cycle", "cycle check", "deptrac", "module deps"});
     item.hasFormatLint = fs::exists(repoPath / ".clang-format")
         || repoHasAnyPatternInRelevantFiles(repoPath, repoFiles, {"clang-format", "format-check"});
     item.scoreReliability = computeReliabilityScore(
@@ -1161,7 +1221,7 @@ AppUI::RepoInventoryEntry AppUI::buildRepoInventoryEntry(const std::string& repo
     const bool hasWerrorExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"-werror"});
     item.hasStrictWarningsExec = hasWallExec && hasWextraExec && (hasWpedanticExec || hasWerrorExec);
     item.hasComplexityGuardExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"lizard", "oclint", "cyclomatic", "cognitive complexity"});
-    item.hasCycleGuardExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"include-cycle", "dependency cycle", "cycle check", "deptrac", "module deps"});
+    item.hasCycleGuardExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"include-cycle", "include_cycles", "check_include_cycles", "dependency cycle", "cycle check", "deptrac", "module deps"});
     item.hasFormatLintExec = repoHasAnyPatternInCiFiles(repoPath, repoFiles, {"clang-format", "format-check"});
     item.scoreReliabilityExec = computeReliabilityScore(
         item.hasAsanUbsanExec,
@@ -1913,6 +1973,254 @@ void AppUI::renderPlanningTab() {
     ImGui::BulletText("Pronto para detalhamento na aba [Projetos]");
 }
 
+void AppUI::renderMetricsPcoaOrdination() {
+    ImGui::SeparatorText("PCoA das Metricas de Projeto");
+    ImGui::TextDisabled("Ordenacao exploratoria: cada repositorio vira um vetor com scores, sinais de governanca, confiabilidade e OCI/OCS.");
+    ImGui::SameLine();
+    ImGui::Checkbox("Rotulos", &m_metricsPcoaShowLabels);
+
+    if (m_repoInventory.size() < 3) {
+        ImGui::TextDisabled("A PCoA precisa de pelo menos 3 repositorios no inventario.");
+        return;
+    }
+
+    struct EigenPair {
+        double value{0.0};
+        std::vector<double> vector;
+    };
+    struct Point {
+        const RepoInventoryEntry* repo{nullptr};
+        double x{0.0};
+        double y{0.0};
+    };
+
+    auto signal = [](bool value) { return value ? 1.0 : 0.0; };
+    auto score = [](int value) { return std::clamp(static_cast<double>(value), 0.0, 100.0) / 100.0; };
+    auto buildMetricVector = [&](const RepoInventoryEntry& repo) {
+        std::vector<double> v = {
+            score(repo.scoreTotal),
+            score(repo.scoreEngineeringDiscipline),
+            score(100 - repo.scoreVibeRisk),
+            score(repo.scoreOperational),
+            score(repo.scoreMaturity),
+            score(repo.scoreReliability),
+            score(repo.scoreReliabilityExec),
+            score(repo.ontologyClarityScore),
+            score(repo.ontologyEntitiesScore),
+            score(repo.ontologyRelationsScore),
+            score(repo.ontologyValidityScore),
+            score(repo.ontologyIdentityScore),
+            score(repo.ontologyConfidenceScore),
+            score(repo.ontologyAlignmentScore),
+            score(repo.ontologyBestCompatibilityScore),
+            std::clamp(static_cast<double>(repo.governanceSignals) / 8.0, 0.0, 1.0),
+            signal(repo.hasAdr),
+            signal(repo.hasDdd),
+            signal(repo.hasDai),
+            signal(repo.hasPolicies),
+            signal(repo.hasToolContracts),
+            signal(repo.hasApprovalPolicy),
+            signal(repo.hasAuditEvidence),
+            signal(repo.hasOcsAlignmentEvidence),
+            signal(repo.hasReadme),
+            signal(repo.hasCi),
+            signal(repo.hasTests),
+            signal(repo.hasAsanUbsan),
+            signal(repo.hasLeakCheck),
+            signal(repo.hasStaticAnalysis),
+            signal(repo.hasStrictWarnings),
+            signal(repo.hasComplexityGuard),
+            signal(repo.hasCycleGuard),
+            signal(repo.hasFormatLint),
+            signal(repo.hasAsanUbsanExec),
+            signal(repo.hasLeakCheckExec),
+            signal(repo.hasStaticAnalysisExec),
+            signal(repo.hasStrictWarningsExec),
+            signal(repo.hasComplexityGuardExec),
+            signal(repo.hasCycleGuardExec),
+            signal(repo.hasFormatLintExec),
+            score(100 - std::min(repo.detectedArtifacts, 20) * 5)
+        };
+        return v;
+    };
+
+    const std::size_t n = m_repoInventory.size();
+    std::vector<std::vector<double>> x;
+    x.reserve(n);
+    for (const auto& repo : m_repoInventory) x.push_back(buildMetricVector(repo));
+    const std::size_t p = x.front().size();
+
+    for (std::size_t col = 0; col < p; col++) {
+        double mean = 0.0;
+        for (const auto& row : x) mean += row[col];
+        mean /= static_cast<double>(n);
+        double var = 0.0;
+        for (const auto& row : x) {
+            const double d = row[col] - mean;
+            var += d * d;
+        }
+        const double sd = std::sqrt(var / static_cast<double>(n));
+        for (auto& row : x) row[col] = sd > 1e-9 ? ((row[col] - mean) / sd) : 0.0;
+    }
+
+    std::vector<std::vector<double>> sqDist(n, std::vector<double>(n, 0.0));
+    for (std::size_t i = 0; i < n; i++) {
+        for (std::size_t j = i + 1; j < n; j++) {
+            double d2 = 0.0;
+            for (std::size_t col = 0; col < p; col++) {
+                const double d = x[i][col] - x[j][col];
+                d2 += d * d;
+            }
+            sqDist[i][j] = d2;
+            sqDist[j][i] = d2;
+        }
+    }
+
+    std::vector<double> rowMean(n, 0.0);
+    double grandMean = 0.0;
+    for (std::size_t i = 0; i < n; i++) {
+        for (std::size_t j = 0; j < n; j++) rowMean[i] += sqDist[i][j];
+        rowMean[i] /= static_cast<double>(n);
+        grandMean += rowMean[i];
+    }
+    grandMean /= static_cast<double>(n);
+
+    std::vector<std::vector<double>> b(n, std::vector<double>(n, 0.0));
+    for (std::size_t i = 0; i < n; i++) {
+        for (std::size_t j = 0; j < n; j++) {
+            b[i][j] = -0.5 * (sqDist[i][j] - rowMean[i] - rowMean[j] + grandMean);
+        }
+    }
+
+    auto topEigen = [&](const std::vector<std::vector<double>>& matrix) {
+        EigenPair pair;
+        pair.vector.assign(n, 0.0);
+        for (std::size_t i = 0; i < n; i++) pair.vector[i] = 1.0 / static_cast<double>(i + 1);
+        for (int iter = 0; iter < 120; iter++) {
+            std::vector<double> next(n, 0.0);
+            for (std::size_t i = 0; i < n; i++) {
+                for (std::size_t j = 0; j < n; j++) next[i] += matrix[i][j] * pair.vector[j];
+            }
+            double norm = 0.0;
+            for (double value : next) norm += value * value;
+            norm = std::sqrt(norm);
+            if (norm <= 1e-12) break;
+            for (double& value : next) value /= norm;
+            pair.vector = std::move(next);
+        }
+        std::vector<double> mv(n, 0.0);
+        for (std::size_t i = 0; i < n; i++) {
+            for (std::size_t j = 0; j < n; j++) mv[i] += matrix[i][j] * pair.vector[j];
+        }
+        for (std::size_t i = 0; i < n; i++) pair.value += pair.vector[i] * mv[i];
+        return pair;
+    };
+
+    const EigenPair first = topEigen(b);
+    if (first.value <= 1e-9) {
+        ImGui::TextDisabled("Nao ha variacao suficiente nas metricas para projetar a PCoA.");
+        return;
+    }
+    for (std::size_t i = 0; i < n; i++) {
+        for (std::size_t j = 0; j < n; j++) {
+            b[i][j] -= first.value * first.vector[i] * first.vector[j];
+        }
+    }
+    const EigenPair second = topEigen(b);
+
+    std::vector<Point> points;
+    points.reserve(n);
+    const double sx = std::sqrt(std::max(0.0, first.value));
+    const double sy = std::sqrt(std::max(0.0, second.value));
+    double minX = 0.0, maxX = 0.0, minY = 0.0, maxY = 0.0;
+    for (std::size_t i = 0; i < n; i++) {
+        Point point{&m_repoInventory[i], first.vector[i] * sx, second.vector[i] * sy};
+        if (points.empty()) {
+            minX = maxX = point.x;
+            minY = maxY = point.y;
+        } else {
+            minX = std::min(minX, point.x);
+            maxX = std::max(maxX, point.x);
+            minY = std::min(minY, point.y);
+            maxY = std::max(maxY, point.y);
+        }
+        points.push_back(point);
+    }
+
+    ImGui::BeginChild("##MetricsPcoaCanvas", ImVec2(0.f, 420.f), true);
+    const ImVec2 canvasPos = ImGui::GetCursorScreenPos();
+    const ImVec2 canvasSize = ImGui::GetContentRegionAvail();
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 canvasMax(canvasPos.x + canvasSize.x, canvasPos.y + canvasSize.y);
+    draw->AddRectFilled(canvasPos, canvasMax, IM_COL32(10, 12, 18, 255));
+    draw->AddRect(canvasPos, canvasMax, IM_COL32(50, 60, 80, 200));
+
+    const float leftPad = 58.f;
+    const float rightPad = 24.f;
+    const float topPad = 22.f;
+    const float bottomPad = 38.f;
+    const float plotW = std::max(1.f, canvasSize.x - leftPad - rightPad);
+    const float plotH = std::max(1.f, canvasSize.y - topPad - bottomPad);
+    const ImVec2 plotMin(canvasPos.x + leftPad, canvasPos.y + topPad);
+    const ImVec2 plotMax(plotMin.x + plotW, plotMin.y + plotH);
+    draw->AddRect(plotMin, plotMax, IM_COL32(70, 90, 120, 200));
+
+    const double dx = std::max(1e-9, maxX - minX);
+    const double dy = std::max(1e-9, maxY - minY);
+    const double padX = dx * 0.08;
+    const double padY = dy * 0.08;
+    minX -= padX; maxX += padX; minY -= padY; maxY += padY;
+
+    auto toScreen = [&](double px, double py) {
+        const float xPos = plotMin.x + plotW * static_cast<float>((px - minX) / std::max(1e-9, maxX - minX));
+        const float yPos = plotMax.y - plotH * static_cast<float>((py - minY) / std::max(1e-9, maxY - minY));
+        return ImVec2(xPos, yPos);
+    };
+    for (int tick = 0; tick <= 4; tick++) {
+        const float t = static_cast<float>(tick) / 4.f;
+        const float xLine = plotMin.x + plotW * t;
+        const float yLine = plotMax.y - plotH * t;
+        draw->AddLine(ImVec2(xLine, plotMin.y), ImVec2(xLine, plotMax.y), IM_COL32(30, 35, 48, 180));
+        draw->AddLine(ImVec2(plotMin.x, yLine), ImVec2(plotMax.x, yLine), IM_COL32(30, 35, 48, 180));
+    }
+    draw->AddText(ImVec2(plotMin.x + plotW * 0.5f - 24.f, plotMax.y + 18.f), IM_COL32(180, 190, 210, 255), "PCo1");
+    draw->AddText(ImVec2(canvasPos.x + 8.f, plotMin.y - 4.f), IM_COL32(180, 190, 210, 255), "PCo2");
+
+    const ImVec2 mousePos = ImGui::GetIO().MousePos;
+    const RepoInventoryEntry* hovered = nullptr;
+    for (const auto& point : points) {
+        const ImVec2 pos = toScreen(point.x, point.y);
+        const float health = static_cast<float>(point.repo->scoreTotal) / 100.f;
+        const int red = static_cast<int>(230.f - health * 150.f);
+        const int green = static_cast<int>(90.f + health * 150.f);
+        const ImU32 fill = IM_COL32(red, green, 220, 230);
+        draw->AddCircleFilled(pos, 6.f, fill);
+        draw->AddCircle(pos, 6.f, IM_COL32(130, 220, 255, 230), 16, 1.3f);
+        const float mx = mousePos.x - pos.x;
+        const float my = mousePos.y - pos.y;
+        if ((mx * mx + my * my) <= 100.f) hovered = point.repo;
+        if (m_metricsPcoaShowLabels || point.repo->scoreTotal >= 85 || point.repo->scoreTotal <= 35) {
+            draw->AddText(ImVec2(pos.x + 8.f, pos.y - 7.f), IM_COL32(210, 220, 235, 240), point.repo->name.c_str());
+        }
+    }
+
+    if (hovered) {
+        ImGui::BeginTooltip();
+        ImGui::TextUnformatted(hovered->name.c_str());
+        ImGui::Separator();
+        ImGui::Text("Total=%d | Disc=%d | Vibe=%d | Oper=%d", hovered->scoreTotal, hovered->scoreEngineeringDiscipline, hovered->scoreVibeRisk, hovered->scoreOperational);
+        ImGui::Text("Matur=%d | ConfCfg=%d | ConfExec=%d", hovered->scoreMaturity, hovered->scoreReliability, hovered->scoreReliabilityExec);
+        ImGui::Text("OCI=%d | Doc/Codigo=%d | Top OCS=%d (%s)",
+            hovered->ontologyClarityScore,
+            hovered->ontologyAlignmentScore,
+            hovered->ontologyBestCompatibilityScore,
+            hovered->ontologyBestCompatibilityRepo.empty() ? "-" : hovered->ontologyBestCompatibilityRepo.c_str());
+        ImGui::EndTooltip();
+    }
+
+    ImGui::EndChild();
+}
+
 void AppUI::renderFlowMetricsTab() {
     if (m_repoInventory.empty()) {
         scanWorkspaceInventory();
@@ -1977,6 +2285,9 @@ void AppUI::renderFlowMetricsTab() {
         ImGui::TextWrapped("%s", m_metricsActionMessage.c_str());
     }
 
+    renderMetricsPcoaOrdination();
+
+    ImGui::Spacing();
     const auto gm = m_store.computeGlobalFlowMetrics("", periodDays);
     ImGui::TextColored(ImVec4(0.55f, 0.75f, 1.f, 1.f), "Indicadores Globais de Fluxo");
     ImGui::Separator();
@@ -3342,6 +3653,15 @@ void AppUI::renderInventoryTab() {
             ImGui::Text("Build: %s", selected->buildSystem.c_str());
             ImGui::Text("Artefatos: %d", selected->detectedArtifacts);
             ImGui::Text("Integrado: %s", selected->integratedWithLabGestao ? "Sim" : "Nao");
+            if (ImGui::Button("Exportar Caracterizacao")) {
+                std::string outPath;
+                std::string err;
+                if (exportRepoCharacterizationReport(*selected, &outPath, &err)) {
+                    m_repoInventoryMessage = "Caracterizacao exportada: " + outPath;
+                } else {
+                    m_repoInventoryMessage = "Falha ao exportar caracterizacao: " + err;
+                }
+            }
             ImGui::Separator();
             ImGui::TextDisabled("Ontologia");
             ImGui::BulletText("Cobertura de entidades: %d", selected->ontologyEntitiesScore);
@@ -3379,6 +3699,7 @@ void AppUI::renderInventoryTab() {
             ImGui::BulletText("Tool Contracts: %s", selected->hasToolContracts ? "OK" : "-");
             ImGui::BulletText("Approval Matrix: %s", selected->hasApprovalPolicy ? "OK" : "-");
             ImGui::BulletText("Audit/Evidence: %s", selected->hasAuditEvidence ? "OK" : "-");
+            ImGui::BulletText("OCS Alignment: %s", selected->hasOcsAlignmentEvidence ? "OK" : "-");
             ImGui::BulletText("Governanca: %d/8", selected->governanceSignals);
             ImGui::Separator();
             ImGui::TextDisabled("Confiabilidade");
@@ -3528,12 +3849,13 @@ std::vector<std::string> AppUI::generateActionPlanForRepo(const RepoInventoryEnt
     }
     if (bestOcs < 40 && m_repoInventory.size() > 1) {
         plan.push_back("Revisar OCS: nenhum par compativel forte; explicitar fronteiras, vocabulario comum e contratos antes de integrar.");
-    } else if (alignmentPairs > 0 && compatiblePairs == 0) {
+    } else if (alignmentPairs > 0 && compatiblePairs == 0 && !repo.hasOcsAlignmentEvidence) {
         plan.push_back("Melhorar OCS com repos em alinhamento: mapear entidades equivalentes, relacoes compartilhadas e regras divergentes.");
     } else if (compatiblePairs > 0 && repo.ontologyClarityScore < 80) {
         plan.push_back("Elevar OCI antes de integrar pares com OCS alto: documentar entidades e relacoes canonicas, vincular cada entidade aos tipos/modulos implementados, declarar regras de validade e definir identidade canonica.");
     }
     if (repo.governanceSignals == 0) plan.push_back("Adicionar governanca minima: CONTRIBUTING, templates PR/Issue, CODEOWNERS, policies e contratos de ferramenta.");
+    else if (repo.governanceSignals < 8) plan.push_back("Completar governanca do repositorio: adicionar sinais ausentes para chegar a 8/8 (CONTRIBUTING, CODEOWNERS, templates PR/Issue, policies, contratos, aprovacao e evidencias).");
     if (!repo.hasPolicies) plan.push_back("Versionar policies explicitas para uso de IA, seguranca e fronteiras de contexto.");
     if (!repo.hasToolContracts) plan.push_back("Criar contratos executaveis para ferramentas/agentes e validar precondicoes/evidencias.");
     if (!repo.hasApprovalPolicy) plan.push_back("Formalizar matriz de aprovacao proporcional ao risco e aos contextos criticos.");
@@ -3554,6 +3876,178 @@ std::vector<std::string> AppUI::generateActionPlanForRepo(const RepoInventoryEnt
     return plan;
 }
 
+bool AppUI::exportRepoCharacterizationReport(const RepoInventoryEntry& repo, std::string* outputPath, std::string* errorMsg) const {
+    const fs::path outDir = fs::path(m_dataPath).parent_path().empty() ? fs::path("data") : fs::path(m_dataPath).parent_path();
+    std::error_code ec;
+    fs::create_directories(outDir, ec);
+    if (ec) {
+        if (errorMsg) *errorMsg = "nao foi possivel criar diretorio de saida";
+        return false;
+    }
+
+    const std::string today = todayISO();
+    const fs::path outFile = outDir / ("repo-characterization-" + safeFileSlug(repo.name) + "-" + today + ".md");
+    std::ofstream out(outFile);
+    if (!out.is_open()) {
+        if (errorMsg) *errorMsg = "nao foi possivel abrir relatorio para escrita";
+        return false;
+    }
+
+    std::vector<std::pair<int, const RepoInventoryEntry*>> compat;
+    compat.reserve(m_repoInventory.size());
+    for (const auto& candidate : m_repoInventory) {
+        if (candidate.path == repo.path) continue;
+        compat.push_back({cachedOntologyCompatibilityScore(repo, candidate), &candidate});
+    }
+    std::stable_sort(compat.begin(), compat.end(), [](const auto& a, const auto& b) {
+        if (a.first != b.first) return a.first > b.first;
+        return a.second->name < b.second->name;
+    });
+
+    const auto plan = generateActionPlanForRepo(repo);
+    const char* disciplineLabel =
+        repo.scoreEngineeringDiscipline >= 80 ? "alta" :
+        repo.scoreEngineeringDiscipline >= 60 ? "media" : "baixa";
+    const char* vibeLabel =
+        repo.scoreVibeRisk >= 70 ? "alto" :
+        repo.scoreVibeRisk >= 40 ? "medio" : "baixo";
+    const char* spaghettiLabel =
+        (!repo.hasComplexityGuard || !repo.hasCycleGuard || !repo.hasDdd) ? "atencao" : "controlado";
+
+    out << "# Caracterizacao do Projeto - " << repo.name << "\n\n";
+    out << "- Data: " << today << "\n";
+    out << "- Workspace: " << m_repoInventoryRoot << "\n";
+    out << "- Repositorio: `" << repo.name << "`\n";
+    out << "- Caminho: `" << repo.path << "`\n";
+    out << "- Documento de referencia: `docs/manuals/METRICS_REFERENCE.md`\n\n";
+
+    out << "## Resumo\n\n";
+    out << "| Parametro | Valor |\n";
+    out << "| --- | ---: |\n";
+    out << "| Total | " << repo.scoreTotal << " |\n";
+    out << "| Disciplina | " << repo.scoreEngineeringDiscipline << " |\n";
+    out << "| Vibe Risk | " << repo.scoreVibeRisk << " |\n";
+    out << "| Operacional | " << repo.scoreOperational << " |\n";
+    out << "| Maturidade | " << repo.scoreMaturity << " |\n";
+    out << "| Confiab Config | " << repo.scoreReliability << " |\n";
+    out << "| Confiab Exec | " << repo.scoreReliabilityExec << " |\n";
+    out << "| OCI | " << repo.ontologyClarityScore << " |\n";
+    out << "| Doc/Codigo | " << repo.ontologyAlignmentScore << " |\n";
+    out << "| Artefatos | " << repo.detectedArtifacts << " |\n\n";
+    out << "- Build: `" << repo.buildSystem << "`\n";
+    out << "- Integrado ao LabGestao: " << (repo.integratedWithLabGestao ? "Sim" : "Nao") << "\n";
+    out << "- Engineering Discipline: " << disciplineLabel << "\n";
+    out << "- Vibe Risk: " << vibeLabel << "\n";
+    out << "- Spaghetti Risk (proxy): " << spaghettiLabel << "\n\n";
+
+    out << "## Operacional\n\n";
+    out << "| Sinal | Valor |\n";
+    out << "| --- | --- |\n";
+    out << "| README | " << okDash(repo.hasReadme) << " |\n";
+    out << "| CI | " << okDash(repo.hasCi) << " |\n";
+    out << "| Testes | " << okDash(repo.hasTests) << " |\n";
+    out << "| .gitignore | " << okDash(repo.hasGitignore) << " |\n";
+    out << "| LICENSE | " << okDash(repo.hasLicense) << " |\n";
+    out << "| Sem artefatos rastreados | " << okDash(repo.detectedArtifacts == 0) << " |\n\n";
+
+    out << "## Ontologia\n\n";
+    out << "| Parametro | Valor |\n";
+    out << "| --- | ---: |\n";
+    out << "| OCI | " << repo.ontologyClarityScore << " |\n";
+    out << "| Cobertura de entidades | " << repo.ontologyEntitiesScore << " |\n";
+    out << "| Relacoes explicitas | " << repo.ontologyRelationsScore << " |\n";
+    out << "| Regras de validacao | " << repo.ontologyValidityScore << " |\n";
+    out << "| Regras de identidade | " << repo.ontologyIdentityScore << " |\n";
+    out << "| Confianca ontologica | " << repo.ontologyConfidenceScore << " |\n";
+    out << "| Doc/Codigo | " << repo.ontologyAlignmentScore << " |\n";
+    out << "| Entidades declaradas | " << repo.ontologyDeclaredEntities.size() << " |\n";
+    out << "| Entidades implementadas | " << repo.ontologyImplementedEntities.size() << " |\n";
+    out << "| Relacoes declaradas | " << repo.ontologyDeclaredRelations.size() << " |\n";
+    out << "| Relacoes implementadas | " << repo.ontologyImplementedRelations.size() << " |\n\n";
+    out << "- Entidades consolidadas: " << joinMarkdownList(repo.ontologyEntities, 40) << "\n";
+    out << "- Relacoes consolidadas: " << joinMarkdownList(repo.ontologyRelations, 40) << "\n";
+    out << "- Entidades declaradas: " << joinMarkdownList(repo.ontologyDeclaredEntities, 40) << "\n";
+    out << "- Entidades implementadas: " << joinMarkdownList(repo.ontologyImplementedEntities, 40) << "\n";
+    out << "- Relacoes declaradas: " << joinMarkdownList(repo.ontologyDeclaredRelations, 40) << "\n";
+    out << "- Relacoes implementadas: " << joinMarkdownList(repo.ontologyImplementedRelations, 40) << "\n\n";
+
+    out << "## Maturidade e Governanca\n\n";
+    out << "| Sinal | Valor |\n";
+    out << "| --- | --- |\n";
+    out << "| ADR | " << okDash(repo.hasAdr) << " |\n";
+    out << "| DDD | " << okDash(repo.hasDdd) << " |\n";
+    out << "| DAI | " << okDash(repo.hasDai) << " |\n";
+    out << "| Policies | " << okDash(repo.hasPolicies) << " |\n";
+    out << "| Tool Contracts | " << okDash(repo.hasToolContracts) << " |\n";
+    out << "| Approval Matrix | " << okDash(repo.hasApprovalPolicy) << " |\n";
+    out << "| Audit/Evidence | " << okDash(repo.hasAuditEvidence) << " |\n";
+    out << "| OCS Alignment Evidence | " << okDash(repo.hasOcsAlignmentEvidence) << " |\n";
+    out << "| Governanca | " << repo.governanceSignals << "/8 |\n\n";
+
+    out << "## Confiabilidade Configurada\n\n";
+    out << "| Sinal | Valor |\n";
+    out << "| --- | --- |\n";
+    out << "| ASan/UBSan | " << okDash(repo.hasAsanUbsan) << " |\n";
+    out << "| Leak check | " << okDash(repo.hasLeakCheck) << " |\n";
+    out << "| Static analysis | " << okDash(repo.hasStaticAnalysis) << " |\n";
+    out << "| Warnings estritos | " << okDash(repo.hasStrictWarnings) << " |\n";
+    out << "| Complexidade guard | " << okDash(repo.hasComplexityGuard) << " |\n";
+    out << "| Cycle guard | " << okDash(repo.hasCycleGuard) << " |\n";
+    out << "| Format/lint | " << okDash(repo.hasFormatLint) << " |\n\n";
+
+    out << "## Confiabilidade Executada no CI\n\n";
+    out << "| Sinal | Valor |\n";
+    out << "| --- | --- |\n";
+    out << "| ASan/UBSan exec | " << okDash(repo.hasAsanUbsanExec) << " |\n";
+    out << "| Leak check exec | " << okDash(repo.hasLeakCheckExec) << " |\n";
+    out << "| Static analysis exec | " << okDash(repo.hasStaticAnalysisExec) << " |\n";
+    out << "| Warnings estritos exec | " << okDash(repo.hasStrictWarningsExec) << " |\n";
+    out << "| Complexidade exec | " << okDash(repo.hasComplexityGuardExec) << " |\n";
+    out << "| Cycle guard exec | " << okDash(repo.hasCycleGuardExec) << " |\n";
+    out << "| Format/lint exec | " << okDash(repo.hasFormatLintExec) << " |\n\n";
+
+    out << "## Compatibilidade Ontologica (OCS)\n\n";
+    if (compat.empty()) {
+        out << "- Sem outros repositorios para comparar.\n\n";
+    } else {
+        const std::size_t limit = std::min<std::size_t>(10, compat.size());
+        out << "| Repo | OCS | Acao sugerida |\n";
+        out << "| --- | ---: | --- |\n";
+        for (std::size_t i = 0; i < limit; i++) {
+            const char* action =
+                compat[i].first >= 70 ? "integrar" :
+                compat[i].first >= 40 ? "alinhar" : "separar";
+            out << "| " << compat[i].second->name << " | " << compat[i].first << " | " << action << " |\n";
+        }
+        out << "\n";
+    }
+
+    out << "## Diagnostico\n\n";
+    if (repo.scoreEngineeringDiscipline >= 80 && repo.scoreVibeRisk < 30) {
+        out << "Projeto com engenharia deliberada forte. Prioridade: manter padroes, reduzir riscos residuais e evitar regressao.\n\n";
+    } else if (repo.scoreEngineeringDiscipline >= 60) {
+        out << "Projeto em zona de atencao. Prioridade: subir confiabilidade, explicitar arquitetura e reduzir espacos de improviso.\n\n";
+    } else if (repo.scoreTotal >= 40) {
+        out << "Projeto com disciplina insuficiente e risco de vibe coding moderado. Prioridade: CI + testes + ADR/DDD/DAI + guardas de complexidade.\n\n";
+    } else {
+        out << "Projeto critico. Prioridade: baseline operacional e eliminacao de riscos tecnicos.\n\n";
+    }
+
+    out << "## Plano de Acao Sugerido\n\n";
+    for (std::size_t i = 0; i < plan.size(); i++) {
+        out << (i + 1) << ". " << plan[i] << "\n";
+    }
+    out << "\n";
+
+    if (!out.good()) {
+        if (errorMsg) *errorMsg = "erro ao escrever relatorio";
+        return false;
+    }
+    if (outputPath) *outputPath = outFile.string();
+    if (errorMsg) errorMsg->clear();
+    return true;
+}
+
 bool AppUI::exportInventoryCsv(std::string* outputPath, std::string* errorMsg) const {
     const fs::path outDir = fs::path(m_dataPath).parent_path().empty() ? fs::path("data") : fs::path(m_dataPath).parent_path();
     std::error_code ec;
@@ -3571,7 +4065,7 @@ bool AppUI::exportInventoryCsv(std::string* outputPath, std::string* errorMsg) c
         return false;
     }
 
-    out << "repo,path,score_total,score_engineering_discipline,score_vibe_risk,score_operational,score_maturity,score_reliability_config,score_reliability_exec,ontology_clarity_score,ontology_entities_score,ontology_relations_score,ontology_validity_score,ontology_identity_score,ontology_alignment_score,ontology_entities_count,ontology_relations_count,ontology_declared_entities_count,ontology_implemented_entities_count,ontology_declared_relations_count,ontology_implemented_relations_count,build,adr,ddd,dai,policies,tool_contracts,approval_policy,audit_evidence,governance_signals,asan_ubsan_cfg,leak_check_cfg,static_analysis_cfg,strict_warnings_cfg,complexity_guard_cfg,cycle_guard_cfg,format_lint_cfg,asan_ubsan_exec,leak_check_exec,static_analysis_exec,strict_warnings_exec,complexity_guard_exec,cycle_guard_exec,format_lint_exec,readme,ci,tests,gitignore,license,artifacts,integrated\n";
+    out << "repo,path,score_total,score_engineering_discipline,score_vibe_risk,score_operational,score_maturity,score_reliability_config,score_reliability_exec,ontology_clarity_score,ontology_entities_score,ontology_relations_score,ontology_validity_score,ontology_identity_score,ontology_alignment_score,ontology_entities_count,ontology_relations_count,ontology_declared_entities_count,ontology_implemented_entities_count,ontology_declared_relations_count,ontology_implemented_relations_count,build,adr,ddd,dai,policies,tool_contracts,approval_policy,audit_evidence,ocs_alignment_evidence,governance_signals,asan_ubsan_cfg,leak_check_cfg,static_analysis_cfg,strict_warnings_cfg,complexity_guard_cfg,cycle_guard_cfg,format_lint_cfg,asan_ubsan_exec,leak_check_exec,static_analysis_exec,strict_warnings_exec,complexity_guard_exec,cycle_guard_exec,format_lint_exec,readme,ci,tests,gitignore,license,artifacts,integrated\n";
     for (const auto& item : m_repoInventory) {
         out << escapeCsvField(item.name) << ","
             << escapeCsvField(item.path) << ","
@@ -3602,6 +4096,7 @@ bool AppUI::exportInventoryCsv(std::string* outputPath, std::string* errorMsg) c
             << (item.hasToolContracts ? "1" : "0") << ","
             << (item.hasApprovalPolicy ? "1" : "0") << ","
             << (item.hasAuditEvidence ? "1" : "0") << ","
+            << (item.hasOcsAlignmentEvidence ? "1" : "0") << ","
             << item.governanceSignals << ","
             << (item.hasAsanUbsan ? "1" : "0") << ","
             << (item.hasLeakCheck ? "1" : "0") << ","
@@ -3681,6 +4176,7 @@ bool AppUI::exportInventoryJson(std::string* outputPath, std::string* errorMsg) 
             {"tool_contracts", item.hasToolContracts},
             {"approval_policy", item.hasApprovalPolicy},
             {"audit_evidence", item.hasAuditEvidence},
+            {"ocs_alignment_evidence", item.hasOcsAlignmentEvidence},
             {"governance_signals", item.governanceSignals},
             {"asan_ubsan_cfg", item.hasAsanUbsan},
             {"leak_check_cfg", item.hasLeakCheck},
