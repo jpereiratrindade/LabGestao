@@ -270,3 +270,9 @@ Interpretacao de `OCS`:
    - `./scripts/run_quality.sh`
 
 O objetivo nao e apenas acelerar scaffold, mas reduzir risco institucional e deixar revisao/auditoria viaveis.
+
+## Premissas de desenvolvimento
+
+**Simples, leve. Sempre pronto. Sempre incompleto!**
+
+[Significado e símbolos das premissas](docs/sister-principles/README.md).
